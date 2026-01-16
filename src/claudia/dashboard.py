@@ -282,26 +282,41 @@ def exit_alt_screen():
         sys.stdout.flush()
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Agent Dashboard')
-    parser.add_argument('--state-dir', default='.agent-state', help='State directory')
-    parser.add_argument('--refresh', type=float, default=3.0, help='Refresh interval')
-    parser.add_argument('--once', action='store_true', help='Run once and exit')
-    parser.add_argument('--no-alt-screen', action='store_true',
-                        help='Disable alternate screen buffer (clears scrollback)')
-    args = parser.parse_args()
+def main(state_dir=None, refresh=3.0, once=False, no_alt_screen=False):
+    """
+    Run the dashboard.
 
-    state_dir = Path(args.state_dir)
+    Args:
+        state_dir: Path to state directory (default: .agent-state)
+        refresh: Refresh interval in seconds (default: 3.0)
+        once: Run once and exit (default: False)
+        no_alt_screen: Disable alternate screen buffer (default: False)
+    """
+    # Support both direct calls and CLI invocation
+    if state_dir is None:
+        parser = argparse.ArgumentParser(description='Agent Dashboard')
+        parser.add_argument('--state-dir', default='.agent-state', help='State directory')
+        parser.add_argument('--refresh', type=float, default=3.0, help='Refresh interval')
+        parser.add_argument('--once', action='store_true', help='Run once and exit')
+        parser.add_argument('--no-alt-screen', action='store_true',
+                            help='Disable alternate screen buffer (clears scrollback)')
+        args = parser.parse_args()
+        state_dir = args.state_dir
+        refresh = args.refresh
+        once = args.once
+        no_alt_screen = args.no_alt_screen
+
+    state_dir = Path(state_dir)
 
     if not state_dir.exists():
         print(f"{Colors.RED}State directory not found: {state_dir}{Colors.RESET}")
         print(f"Initialize with: python setup.py")
         sys.exit(1)
 
-    use_alt_screen = not args.once and not args.no_alt_screen
+    use_alt_screen = not once and not no_alt_screen
 
     try:
-        if args.once:
+        if once:
             clear()
             render(state_dir)
         else:
@@ -315,7 +330,7 @@ def main():
                 else:
                     clear()
                 render(state_dir)
-                time.sleep(args.refresh)
+                time.sleep(refresh)
     except KeyboardInterrupt:
         pass
     finally:

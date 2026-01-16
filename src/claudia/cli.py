@@ -867,7 +867,10 @@ Examples:
     session_p.add_argument('session_id', nargs='?')
 
     # dashboard
-    subparsers.add_parser('dashboard', help='Launch dashboard')
+    dashboard_p = subparsers.add_parser('dashboard', help='Launch dashboard')
+    dashboard_p.add_argument('--refresh', type=float, default=3.0, help='Refresh interval in seconds')
+    dashboard_p.add_argument('--once', action='store_true', help='Run once and exit')
+    dashboard_p.add_argument('--no-alt-screen', action='store_true', help='Disable alternate screen buffer')
 
     # docs - documentation generation
     docs_p = subparsers.add_parser('docs', help='Generate documentation')
@@ -899,7 +902,12 @@ Examples:
         sys.exit(cmd_update(args))
     elif args.command == 'dashboard':
         from claudia import dashboard
-        dashboard.main()
+        dashboard.main(
+            state_dir=args.state_dir,
+            refresh=args.refresh,
+            once=args.once,
+            no_alt_screen=args.no_alt_screen,
+        )
         sys.exit(0)
     elif args.command == 'docs':
         from claudia.docs import cmd_docs
