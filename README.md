@@ -13,7 +13,7 @@ A lightweight task coordination system for Claude Code that supports both single
 ## Installation
 
 ```bash
-pip install git+https://github.com/paulkasay/claudia.git
+pip install git+https://github.com/pwkasay/claudia.git
 ```
 
 For SSL certificate support (recommended on macOS):
