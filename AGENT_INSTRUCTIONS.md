@@ -1,17 +1,17 @@
 # Agent System Instructions
 
-This file is the reference documentation that gets deployed to other projects when using `setup.py`. It provides comprehensive instructions for Claude Code sessions using the agent coordination system.
+This file provides comprehensive instructions for Claude Code sessions using Claudia.
 
 ---
 
-This project uses a unified task coordination system that supports both single-session and parallel multi-session workflows.
+This project uses Claudia, a unified task coordination system that supports both single-session and parallel multi-session workflows.
 
 ---
 
 ## Quick Start (Every Session)
 
 ```python
-from agent import Agent
+from claudia import Agent
 
 agent = Agent()
 agent.register(context="Brief description of focus", labels=["backend", "python"])
@@ -36,6 +36,8 @@ if task:
 **On session start, always check the mode:**
 
 ```python
+from claudia import Agent
+
 agent = Agent()
 
 if agent.is_parallel_mode():
@@ -58,6 +60,8 @@ else:
 In single-session mode, Claude Code works directly with the task JSON:
 
 ```python
+from claudia import Agent
+
 agent = Agent()
 agent.register(context="Working on feature X")
 
@@ -122,6 +126,8 @@ agent.end_session()
 ### How to Start Parallel Mode (Main Session)
 
 ```python
+from claudia import Agent
+
 agent = Agent()
 agent.register(context="Main session - orchestrating", role="main")
 
@@ -153,6 +159,8 @@ They'll automatically connect and receive assignments.
 When a new Claude Code session starts and detects `.parallel-mode`:
 
 ```python
+from claudia import Agent
+
 agent = Agent()
 
 if agent.is_parallel_mode():
@@ -300,38 +308,42 @@ MAIN SESSION:
 
 ```bash
 # Check status
-python agent.py status
+claudia status
 
 # List and search tasks
-python agent.py tasks
-python agent.py tasks --status open
-python agent.py tasks --search "auth"           # Search by title/description
+claudia tasks
+claudia tasks --status open
+claudia tasks --search "auth"           # Search by title/description
 
 # View task details
-python agent.py show task-001                   # Full task view with history
+claudia show task-001                   # Full task view with history
 
 # Create task
-python agent.py create "Fix bug" -p 1 -l bug backend
+claudia create "Fix bug" -p 1 -l bug backend
 
 # Get next task (claims it)
-python agent.py next --labels backend
+claudia next --labels backend
 
 # Complete task
-python agent.py complete task-001 --note "Fixed the bug"
+claudia complete task-001 --note "Fixed the bug"
 
 # Reopen a completed task (undo)
-python agent.py reopen task-001 --note "Needs revision"
+claudia reopen task-001 --note "Needs revision"
 
 # Start parallel mode (main session)
-python agent.py start-parallel --port 8765
+claudia start-parallel --port 8765
 
 # Stop parallel mode
-python agent.py stop-parallel
+claudia stop-parallel
+
+# View sessions
+claudia session                         # List all sessions
+claudia session abc123                  # View specific session
 
 # Global flags
-python agent.py --json tasks                    # JSON output for scripting
-python agent.py --dry-run complete task-001     # Preview without executing
-python agent.py --verbose status                # Show detailed errors
+claudia --json tasks                    # JSON output for scripting
+claudia --dry-run complete task-001     # Preview without executing
+claudia --verbose status                # Show detailed errors
 ```
 
 ---
