@@ -40,15 +40,8 @@ htmlcov/
 .tox/
 .nox/
 
-# Claudia state (for development)
-.agent-state/sessions/*.json
-.agent-state/.parallel-mode
-.agent-state/coordinator.pid
-.agent-state/*.tmp
-.agent-state/docs-state.json
-
-# Keep these in version control
-!.agent-state/sessions/.gitkeep
+# Claudia state (don't track in source repo)
+.agent-state/
 
 # OS
 .DS_Store
