@@ -1,0 +1,662 @@
+{
+  "version": 1,
+  "next_id": 24,
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Test authentication flow",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "backend",
+        "auth"
+      ],
+      "branch": null,
+      "created_at": "2026-01-14T19:44:18.478476Z",
+      "updated_at": "2026-01-16T17:26:52.156437+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-14T19:44:18.478877Z",
+          "session_id": "a8822941",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-14T19:46:54.843393Z",
+          "session_id": "234f9584",
+          "note": "Claimed task"
+        },
+        {
+          "timestamp": "2026-01-14T19:47:22.252181Z",
+          "session_id": "8ab2a062",
+          "note": "Completed: Fixed the auth flow"
+        },
+        {
+          "timestamp": "2026-01-14T19:49:33.679844Z",
+          "session_id": "31789e71",
+          "note": "Reopened (was done): Need to fix edge case"
+        },
+        {
+          "timestamp": "2026-01-16T17:26:52.156678+00:00Z",
+          "session_id": "eb8ae10d",
+          "note": "Completed: Placeholder test task from initial setup"
+        }
+      ]
+    },
+    {
+      "id": "task-002",
+      "title": "Another test task",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "frontend"
+      ],
+      "branch": null,
+      "created_at": "2026-01-14T19:48:38.835132Z",
+      "updated_at": "2026-01-14T19:48:48.620467Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-14T19:48:38.835604Z",
+          "session_id": "57a93f46",
+          "note": "Created task"
+        }
+      ]
+    },
+    {
+      "id": "task-003",
+      "title": "Add session state recovery after autocompact",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "core",
+        "resilience"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:24:40.327166Z",
+      "updated_at": "2026-01-16T17:29:39.163535+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:24:40.327548Z",
+          "session_id": "4e304686",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T17:26:58.450662+00:00Z",
+          "session_id": "3726095d",
+          "note": "Claimed task"
+        },
+        {
+          "timestamp": "2026-01-16T17:29:39.163763+00:00Z",
+          "session_id": "df104d7f",
+          "note": "Completed: Implemented session state recovery: 1) working_on array now tracked in session files when tasks claimed/completed, 2) Added session CLI command to view session context and assigned tasks"
+        }
+      ]
+    },
+    {
+      "id": "task-004",
+      "title": "Document autocompact behavior in CLAUDE.md",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "docs"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:24:41.309598Z",
+      "updated_at": "2026-01-16T17:28:19.787815+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:24:41.309948Z",
+          "session_id": "da9d2e75",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T17:28:10.798298+00:00Z",
+          "session_id": "de0609bc",
+          "note": "Claimed task"
+        },
+        {
+          "timestamp": "2026-01-16T17:28:19.788241+00:00Z",
+          "session_id": "de0609bc",
+          "note": "Completed: Testing complete removes from working_on"
+        }
+      ]
+    },
+    {
+      "id": "task-005",
+      "title": "Add CLI command to show current session context",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "cli"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:24:41.453728Z",
+      "updated_at": "2026-01-16T17:29:39.027531+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:24:41.454150Z",
+          "session_id": "66e7f2d3",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T17:29:20.285851+00:00Z",
+          "session_id": "e07f53fd",
+          "note": "Claimed task"
+        },
+        {
+          "timestamp": "2026-01-16T17:29:39.027824+00:00Z",
+          "session_id": "50ccaf6b",
+          "note": "Completed: Added 'session' CLI command that shows session context, working_on tasks, and helps with autocompact recovery"
+        }
+      ]
+    },
+    {
+      "id": "task-006",
+      "title": "Fix datetime.utcnow() deprecation warnings",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "bug",
+        "python"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:24:48.183773Z",
+      "updated_at": "2026-01-16T17:26:29.687810+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:24:48.184155Z",
+          "session_id": "20bf5f18",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T17:26:29.688189+00:00Z",
+          "session_id": "4dcf8131",
+          "note": "Completed: Replaced datetime.utcnow() with datetime.now(timezone.utc) in agent.py, coordinator.py, and setup.py"
+        }
+      ]
+    },
+    {
+      "id": "task-007",
+      "title": "Test task for datetime fix verification",
+      "description": "",
+      "status": "done",
+      "priority": 3,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "test"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:26:25.254814+00:00Z",
+      "updated_at": "2026-01-16T17:26:52.100570+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:26:25.255180+00:00Z",
+          "session_id": "af6a3e82",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T17:26:52.100915+00:00Z",
+          "session_id": "a9cfeae0",
+          "note": "Completed: Test task - verified datetime fix works"
+        }
+      ]
+    },
+    {
+      "id": "task-008",
+      "title": "Add uninstall command to setup.py",
+      "description": "Add --uninstall flag that removes: agent.py, coordinator.py, dashboard.py, .agent-state/, cleans CLAUDE.md additions, updates .gitignore. Should have --keep-history option to preserve task history.",
+      "status": "open",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "cli",
+        "setup"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:50:50.442238+00:00Z",
+      "updated_at": "2026-01-16T17:50:50.442909+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:50:50.442911+00:00Z",
+          "session_id": "9b831b65",
+          "note": "Created task"
+        }
+      ]
+    },
+    {
+      "id": "task-009",
+      "title": "Add version tracking to Claudia installations",
+      "description": "Store Claudia version in .agent-state/version.json so we can detect when updates are needed and handle migrations",
+      "status": "open",
+      "priority": 2,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "setup"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:50:50.587232+00:00Z",
+      "updated_at": "2026-01-16T17:50:50.587529+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:50:50.587531+00:00Z",
+          "session_id": "952e2c45",
+          "note": "Created task"
+        }
+      ]
+    },
+    {
+      "id": "task-010",
+      "title": "Clean up stale sessions automatically",
+      "description": "Sessions with old heartbeats should be cleaned up. Add --cleanup flag to status command or auto-cleanup on startup",
+      "status": "open",
+      "priority": 2,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "core"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:50:50.734152+00:00Z",
+      "updated_at": "2026-01-16T17:50:50.734435+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:50:50.734437+00:00Z",
+          "session_id": "c4c6b663",
+          "note": "Created task"
+        }
+      ]
+    },
+    {
+      "id": "task-011",
+      "title": "Create package structure (src/claudia/, __init__.py)",
+      "description": "Create src/claudia/ directory, __init__.py with __version__, and basic package structure",
+      "status": "done",
+      "priority": 0,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "setup",
+        "package"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:56:51.928449+00:00Z",
+      "updated_at": "2026-01-16T18:17:47.287533+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:56:51.928901+00:00Z",
+          "session_id": "eafb47bd",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:00:01.084426+00:00Z",
+          "session_id": "27a49349",
+          "note": "Claimed task"
+        },
+        {
+          "timestamp": "2026-01-16T18:10:32.210350+00:00Z",
+          "session_id": "27a49349",
+          "note": "Released on session end"
+        },
+        {
+          "timestamp": "2026-01-16T18:17:47.287541+00:00Z",
+          "session_id": "4f5858de",
+          "note": "Completed: Created src/claudia/ package structure with __init__.py"
+        }
+      ]
+    },
+    {
+      "id": "task-012",
+      "title": "Create pyproject.toml with entry points",
+      "description": "Create pyproject.toml with package metadata, dependencies (none - stdlib only), and CLI entry point for 'claudia' command",
+      "status": "done",
+      "priority": 0,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "setup",
+        "package"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:56:52.099871+00:00Z",
+      "updated_at": "2026-01-16T18:17:47.360664+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:56:52.100146+00:00Z",
+          "session_id": "b268e619",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:17:47.360672+00:00Z",
+          "session_id": "f313c416",
+          "note": "Completed: Created pyproject.toml with CLI entry point"
+        }
+      ]
+    },
+    {
+      "id": "task-013",
+      "title": "Refactor agent.py into src/claudia/agent.py",
+      "description": "Move agent.py to src/claudia/agent.py, update imports, keep Agent class and helper functions",
+      "status": "done",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "refactor",
+        "package"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:56:52.273973+00:00Z",
+      "updated_at": "2026-01-16T18:17:47.436703+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:56:52.274218+00:00Z",
+          "session_id": "7cd222d1",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:17:47.436712+00:00Z",
+          "session_id": "461f7d2d",
+          "note": "Completed: Refactored agent.py into src/claudia/agent.py"
+        }
+      ]
+    },
+    {
+      "id": "task-014",
+      "title": "Refactor coordinator.py into src/claudia/coordinator.py",
+      "description": "Move coordinator.py to src/claudia/coordinator.py, update imports",
+      "status": "done",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "refactor",
+        "package"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:56:52.457411+00:00Z",
+      "updated_at": "2026-01-16T18:17:47.512351+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:56:52.457624+00:00Z",
+          "session_id": "c15543ba",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:17:47.512360+00:00Z",
+          "session_id": "3f317ca9",
+          "note": "Completed: Copied coordinator.py to src/claudia/"
+        }
+      ]
+    },
+    {
+      "id": "task-015",
+      "title": "Refactor dashboard.py into src/claudia/dashboard.py",
+      "description": "Move dashboard.py to src/claudia/dashboard.py, update imports",
+      "status": "done",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "refactor",
+        "package"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:56:52.625396+00:00Z",
+      "updated_at": "2026-01-16T18:17:47.592235+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:56:52.625680+00:00Z",
+          "session_id": "1b0b8804",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:17:47.592245+00:00Z",
+          "session_id": "b4bfb377",
+          "note": "Completed: Copied dashboard.py to src/claudia/"
+        }
+      ]
+    },
+    {
+      "id": "task-016",
+      "title": "Create CLI entry point (src/claudia/cli.py)",
+      "description": "Create unified CLI that combines agent commands + init + uninstall + update. Entry point for 'claudia' command.",
+      "status": "done",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "cli",
+        "package"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:56:52.789131+00:00Z",
+      "updated_at": "2026-01-16T18:17:47.672181+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:56:52.789381+00:00Z",
+          "session_id": "d9bf0d87",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:17:47.672193+00:00Z",
+          "session_id": "8927f767",
+          "note": "Completed: Created comprehensive CLI in src/claudia/cli.py"
+        }
+      ]
+    },
+    {
+      "id": "task-017",
+      "title": "Implement claudia init command",
+      "description": "Initialize .agent-state/ in current project, append to CLAUDE.md. No longer copies Python files.",
+      "status": "done",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "cli",
+        "init"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:56:52.966016+00:00Z",
+      "updated_at": "2026-01-16T18:17:47.747741+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:56:52.966249+00:00Z",
+          "session_id": "8d47307a",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:17:47.747749+00:00Z",
+          "session_id": "ebd8e18a",
+          "note": "Completed: Implemented claudia init command"
+        }
+      ]
+    },
+    {
+      "id": "task-018",
+      "title": "Implement claudia uninstall command",
+      "description": "Remove .agent-state/, clean CLAUDE.md, with --keep-history option",
+      "status": "done",
+      "priority": 2,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "cli"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:56:53.147733+00:00Z",
+      "updated_at": "2026-01-16T18:17:47.820250+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:56:53.147984+00:00Z",
+          "session_id": "b8f21617",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:17:47.820259+00:00Z",
+          "session_id": "3a78d3f3",
+          "note": "Completed: Implemented claudia uninstall command"
+        }
+      ]
+    },
+    {
+      "id": "task-019",
+      "title": "Add update checker (claudia update)",
+      "description": "Query GitHub API for latest release, compare to __version__, offer upgrade command",
+      "status": "done",
+      "priority": 2,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "cli",
+        "update"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T17:56:53.319162+00:00Z",
+      "updated_at": "2026-01-16T18:17:47.893919+00:00Z",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T17:56:53.319451+00:00Z",
+          "session_id": "99e6f15a",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:17:47.893928+00:00Z",
+          "session_id": "da42d0f2",
+          "note": "Completed: Implemented claudia update --check command"
+        }
+      ]
+    },
+    {
+      "id": "task-020",
+      "title": "Design docs agent architecture",
+      "description": "Design how the documentation agent will work: analyze codebase, generate human-centered docs about architecture, patterns, and development workflow. Should be concise, not verbose AI-speak.",
+      "status": "done",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "docs",
+        "agent"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T18:18:49.516923+00:00",
+      "updated_at": "2026-01-16T18:29:37.882995+00:00",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T18:18:49.517389+00:00",
+          "session_id": "4ea37bb5",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:29:37.883314+00:00",
+          "session_id": "7aa02952",
+          "note": "Completed: Created DocsAgent class with analyze() and generate() methods"
+        }
+      ]
+    },
+    {
+      "id": "task-021",
+      "title": "Implement claudia docs command",
+      "description": "Add 'claudia docs' command with subcommands: generate, architecture, onboarding, api",
+      "status": "done",
+      "priority": 1,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "cli",
+        "docs"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T18:18:49.594406+00:00",
+      "updated_at": "2026-01-16T18:29:37.960910+00:00",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T18:18:49.594598+00:00",
+          "session_id": "03185a78",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:29:37.961158+00:00",
+          "session_id": "6110563d",
+          "note": "Completed: Added claudia docs CLI with analyze, generate, and all subcommands"
+        }
+      ]
+    },
+    {
+      "id": "task-022",
+      "title": "Create docs templates for different doc types",
+      "description": "Templates for architecture docs, onboarding guides, API docs - focused on human readability and actionability",
+      "status": "done",
+      "priority": 2,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "docs",
+        "templates"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T18:18:49.672990+00:00",
+      "updated_at": "2026-01-16T18:29:38.037646+00:00",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T18:18:49.673213+00:00",
+          "session_id": "3445e4c0",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:29:38.037841+00:00",
+          "session_id": "4dcb97cb",
+          "note": "Completed: Created templates for architecture, onboarding, api, and readme docs"
+        }
+      ]
+    },
+    {
+      "id": "task-023",
+      "title": "Add incremental doc updates",
+      "description": "Track what's changed since last doc generation, only update affected sections",
+      "status": "done",
+      "priority": 2,
+      "blocked_by": [],
+      "assignee": null,
+      "labels": [
+        "docs"
+      ],
+      "branch": null,
+      "created_at": "2026-01-16T18:18:49.744372+00:00",
+      "updated_at": "2026-01-16T18:29:38.112029+00:00",
+      "notes": [
+        {
+          "timestamp": "2026-01-16T18:18:49.744679+00:00",
+          "session_id": "c1a7287a",
+          "note": "Created task"
+        },
+        {
+          "timestamp": "2026-01-16T18:29:38.112228+00:00",
+          "session_id": "e226084e",
+          "note": "Completed: Added state tracking in docs-state.json for incremental updates"
+        }
+      ]
+    }
+  ]
+}

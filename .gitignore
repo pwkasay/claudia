@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Claudia state (for development)
+.agent-state/sessions/*.json
+.agent-state/.parallel-mode
+.agent-state/coordinator.pid
+.agent-state/*.tmp
+.agent-state/docs-state.json
+
+# Keep these in version control
+!.agent-state/sessions/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs build
+docs/_build/
