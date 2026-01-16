@@ -115,7 +115,7 @@ CLAUDE_MD_CONTENT = '''
 
 # Claudia Task Coordination
 
-This project uses Claudia for task coordination. See [Claudia documentation](https://github.com/paulkasay/claudia) for details.
+This project uses Claudia for task coordination. See [Claudia documentation](https://github.com/pwkasay/claudia) for details.
 
 ## Quick Start
 
@@ -344,7 +344,7 @@ def cmd_uninstall(args):
 # Update Command
 # ============================================================================
 
-GITHUB_REPO = "paulkasay/claudia"
+GITHUB_REPO = "pwkasay/claudia"
 
 
 def _get_ssl_context():
