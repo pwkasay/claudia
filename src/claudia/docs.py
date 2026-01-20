@@ -13,6 +13,7 @@ Usage:
     agent.generate('architecture')
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -66,6 +67,9 @@ class FileInfo:
     classes: list = field(default_factory=list)
     methods: dict = field(default_factory=dict)  # {class_name: [method_names]}
     description: str = ""
+    class_docstrings: dict = field(default_factory=dict)  # {class_name: docstring}
+    function_docstrings: dict = field(default_factory=dict)  # {function_name: docstring}
+    signatures: dict = field(default_factory=dict)  # {function_name: {params, return_type}}
 
 
 @dataclass
@@ -74,6 +78,15 @@ class DocsAgent:
     Documentation generator that analyzes codebases and produces
     human-centered documentation.
     """
+
+    # Extraction limits (class constants)
+    MAX_IMPORTS = 20
+    MAX_FUNCTIONS = 30
+    MAX_CLASSES = 20
+    MAX_METHODS_PER_CLASS = 20
+    MAX_EXPORTS = 20
+    MAX_KEY_CONCEPTS = 15
+    MAX_DEPENDENCIES = 20
 
     project_dir: Path = None
     output_dir: Path = None
@@ -89,6 +102,9 @@ class DocsAgent:
     # Skill level for documentation detail
     skill_level: str = 'mid'  # junior, mid, senior
 
+    # Valid skill levels
+    VALID_SKILL_LEVELS = ('junior', 'mid', 'senior')
+
     def __post_init__(self):
         if self.project_dir is None:
             self.project_dir = Path('.')
@@ -100,6 +116,13 @@ class DocsAgent:
 
         if self.state_file is None:
             self.state_file = self.project_dir / '.agent-state' / 'docs-state.json'
+
+        # Validate skill_level
+        if self.skill_level not in self.VALID_SKILL_LEVELS:
+            raise ValueError(
+                f"Invalid skill_level '{self.skill_level}'. "
+                f"Must be one of: {', '.join(self.VALID_SKILL_LEVELS)}"
+            )
 
         # Load project metadata on init
         if self.metadata is None:
@@ -342,11 +365,19 @@ class DocsAgent:
     # Analysis
     # ========================================================================
 
-    def analyze(self, verbose: bool = False) -> dict:
+    def analyze(self, verbose: bool = False, force: bool = False) -> dict:
         """
-        Analyze the codebase structure.
+        Analyze the codebase structure with incremental support.
 
-        Returns a summary of what was found.
+        Uses cached analysis for unchanged files to speed up repeated runs.
+        A file is considered unchanged if its size matches the cached value.
+
+        Args:
+            verbose: Print each file as it's analyzed
+            force: If True, re-analyze all files even if cached
+
+        Returns:
+            Summary dict including files_analyzed, files_cached, total_lines, etc.
         """
         self.files = {}
         self.structure = {
@@ -356,6 +387,16 @@ class DocsAgent:
         }
         self.entry_points = []
         self.key_concepts = []
+
+        # Load cached state for incremental analysis
+        cached_state = None if force else self._load_state()
+        cached_hashes = cached_state.get('file_hashes', {}) if cached_state else {}
+        cached_file_data = cached_state.get('file_data', {}) if cached_state else {}
+
+        # Track stats
+        files_analyzed = 0
+        files_cached = 0
+        files_removed = 0
 
         # Find all source files
         source_patterns = [
@@ -369,6 +410,8 @@ class DocsAgent:
             '**/dist/**', '**/build/**', '**/.next/**', '**/target/**',
         ]
 
+        current_files = set()
+
         for pattern in source_patterns:
             for file_path in self.project_dir.glob(pattern):
                 # Skip ignored paths
@@ -376,11 +419,35 @@ class DocsAgent:
                 if any(self._match_pattern(rel_path, p) for p in ignore_patterns):
                     continue
 
+                current_files.add(rel_path)
+
+                # Check if file is unchanged (same size)
+                try:
+                    stat = file_path.stat()
+                    if rel_path in cached_hashes and rel_path in cached_file_data:
+                        cached_size = cached_file_data[rel_path].get('size', -1)
+                        if stat.st_size == cached_size:
+                            # Size matches, restore from cache
+                            info = self._restore_file_info(cached_file_data[rel_path])
+                            self.files[rel_path] = info
+                            files_cached += 1
+                            if verbose:
+                                print(f"  Cached: {rel_path}")
+                            continue
+                except OSError:
+                    pass
+
+                # Analyze the file (new or changed)
                 info = self._analyze_file(file_path)
                 if info:
                     self.files[rel_path] = info
+                    files_analyzed += 1
                     if verbose:
                         print(f"  Analyzed: {rel_path}")
+
+        # Count removed files (were in cache but no longer exist)
+        if cached_hashes:
+            files_removed = len(set(cached_hashes.keys()) - current_files)
 
         # Build structure summary
         self._build_structure()
@@ -395,7 +462,10 @@ class DocsAgent:
         self._save_state()
 
         return {
-            'files_analyzed': len(self.files),
+            'files_analyzed': files_analyzed,
+            'files_cached': files_cached,
+            'files_removed': files_removed,
+            'total_files': len(self.files),
             'total_lines': self.structure['total_lines'],
             'directories': len(self.structure['directories']),
             'entry_points': len(self.entry_points),
@@ -404,7 +474,6 @@ class DocsAgent:
 
     def _match_pattern(self, path: str, pattern: str) -> bool:
         """Simple glob-style pattern matching."""
-        import fnmatch
         return fnmatch.fnmatch(path, pattern)
 
     def _analyze_file(self, file_path: Path) -> Optional[FileInfo]:
@@ -427,6 +496,12 @@ class DocsAgent:
                 info.classes = self._extract_python_classes(content)
                 info.methods = self._extract_python_class_methods(content)
                 info.description = self._extract_python_docstring(content)
+                # Extract docstrings for classes and functions
+                class_docs, func_docs = self._extract_python_entity_docstrings(content)
+                info.class_docstrings = class_docs
+                info.function_docstrings = func_docs
+                # Extract function signatures with type hints
+                info.signatures = self._extract_python_signatures(content)
             elif info.language in ('javascript', 'typescript'):
                 info.imports = self._extract_js_imports(content)
                 info.exports = self._extract_js_exports(content)
@@ -479,7 +554,7 @@ class DocsAgent:
                         # Filter stdlib unless explicitly requested
                         if include_stdlib or module not in STDLIB_MODULES:
                             imports.append(module)
-        return imports[:20]  # Limit
+        return imports[:self.MAX_IMPORTS]
 
     def _extract_python_functions(self, content: str) -> list:
         """Extract Python function names."""
@@ -488,14 +563,94 @@ class DocsAgent:
             name = match.group(1)
             if not name.startswith('_') or name.startswith('__'):
                 functions.append(name)
-        return functions[:30]
+        return functions[:self.MAX_FUNCTIONS]
+
+    def _extract_python_signatures(self, content: str) -> dict:
+        """Extract Python function signatures with type hints.
+
+        Returns:
+            dict: {function_name: {'params': [...], 'return_type': str or None}}
+            Each param is {'name': str, 'type': str or None, 'default': str or None}
+        """
+        signatures = {}
+
+        # Pattern to match function definition with optional return type
+        func_pattern = re.compile(
+            r'^def\s+(\w+)\s*\(([^)]*)\)\s*(?:->\s*([^:]+))?\s*:',
+            re.MULTILINE
+        )
+
+        for match in func_pattern.finditer(content):
+            name = match.group(1)
+            params_str = match.group(2).strip()
+            return_type = match.group(3).strip() if match.group(3) else None
+
+            # Parse parameters
+            params = []
+            if params_str:
+                # Split on commas, handling nested brackets
+                depth = 0
+                current = []
+                for char in params_str + ',':
+                    if char in '([{':
+                        depth += 1
+                        current.append(char)
+                    elif char in ')]}':
+                        depth -= 1
+                        current.append(char)
+                    elif char == ',' and depth == 0:
+                        param = ''.join(current).strip()
+                        if param:
+                            params.append(self._parse_python_param(param))
+                        current = []
+                    else:
+                        current.append(char)
+
+            signatures[name] = {
+                'params': params,
+                'return_type': return_type,
+            }
+
+        return signatures
+
+    def _parse_python_param(self, param: str) -> dict:
+        """Parse a single Python parameter into name, type, and default."""
+        result = {'name': '', 'type': None, 'default': None}
+
+        # Handle *args and **kwargs
+        if param.startswith('**'):
+            rest = param[2:]
+            result['name'] = '**' + rest.split(':')[0].split('=')[0].strip()
+            if ':' in rest:
+                result['type'] = rest.split(':', 1)[1].strip()
+        elif param.startswith('*'):
+            rest = param[1:]
+            result['name'] = '*' + rest.split(':')[0].split('=')[0].strip()
+            if ':' in rest:
+                result['type'] = rest.split(':', 1)[1].strip()
+        else:
+            # Check for default value first
+            if '=' in param:
+                param_part, default = param.split('=', 1)
+                result['default'] = default.strip()
+                param = param_part.strip()
+
+            # Check for type annotation
+            if ':' in param:
+                name_part, type_part = param.split(':', 1)
+                result['name'] = name_part.strip()
+                result['type'] = type_part.strip()
+            else:
+                result['name'] = param.strip()
+
+        return result
 
     def _extract_python_classes(self, content: str) -> list:
         """Extract Python class names."""
         classes = []
         for match in re.finditer(r'^class\s+(\w+)', content, re.MULTILINE):
             classes.append(match.group(1))
-        return classes[:20]
+        return classes[:self.MAX_CLASSES]
 
     def _extract_python_class_methods(self, content: str) -> dict:
         """Extract methods for each class by tracking indentation.
@@ -540,7 +695,43 @@ class DocsAgent:
                 current_class = None
 
         # Limit methods per class
-        return {cls: meths[:20] for cls, meths in methods.items()}
+        return {cls: meths[:self.MAX_METHODS_PER_CLASS] for cls, meths in methods.items()}
+
+    def _extract_python_entity_docstrings(self, content: str) -> tuple:
+        """Extract docstrings for classes and functions.
+
+        Finds the first triple-quoted string after class/function definitions.
+
+        Returns:
+            tuple: (class_docstrings, function_docstrings) dicts mapping names to docstrings
+        """
+        class_docstrings = {}
+        function_docstrings = {}
+
+        # Pattern to match class/function definition followed by docstring
+        # Captures: 1=def/class, 2=name, 3=docstring content
+        pattern = r'^(class|def)\s+(\w+)[^:]*:\s*\n\s*(?:"""(.*?)"""|\'\'\'(.*?)\'\'\')'
+
+        for match in re.finditer(pattern, content, re.MULTILINE | re.DOTALL):
+            entity_type = match.group(1)
+            name = match.group(2)
+            # Docstring is in group 3 (double quotes) or group 4 (single quotes)
+            docstring = (match.group(3) or match.group(4) or '').strip()
+
+            if docstring:
+                # Clean up and truncate
+                docstring = re.sub(r'\n\s*\n', '\n\n', docstring)  # Normalize paragraphs
+                docstring = re.sub(r'[ \t]+', ' ', docstring)  # Collapse whitespace
+                docstring = self._smart_truncate(docstring, max_length=150)
+
+                if entity_type == 'class':
+                    class_docstrings[name] = docstring
+                else:
+                    # Only include public functions (not private helpers)
+                    if not name.startswith('_') or name.startswith('__'):
+                        function_docstrings[name] = docstring
+
+        return class_docstrings, function_docstrings
 
     def _smart_truncate(self, text: str, max_length: int = 200) -> str:
         """Truncate text at sentence boundaries, not mid-word.
@@ -604,36 +795,40 @@ class DocsAgent:
                 module = module.split('/')[0]
                 if module and module not in imports:
                     imports.append(module)
-        return imports[:20]
+        return imports[:self.MAX_IMPORTS]
 
     def _extract_js_exports(self, content: str) -> list:
         """Extract JavaScript/TypeScript exports."""
         exports = []
         for match in re.finditer(r'export\s+(?:default\s+)?(?:const|let|var|function|class)\s+(\w+)', content):
             exports.append(match.group(1))
-        return exports[:20]
+        return exports[:self.MAX_EXPORTS]
 
     def _extract_js_functions(self, content: str) -> list:
         """Extract JavaScript function names."""
         functions = []
         patterns = [
-            r'function\s+(\w+)\s*\(',
-            r'const\s+(\w+)\s*=\s*(?:async\s*)?\(',
-            r'(\w+)\s*:\s*(?:async\s*)?\(',
+            r'function\s+(\w+)\s*\(',                                    # function foo(
+            r'(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>',  # const foo = () =>
+            r'(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\w+\s*=>',   # const foo = x =>
+            r'(\w+)\s*:\s*(?:async\s*)?function\s*\(',                   # foo: function(
+            r'(\w+)\s*\([^)]*\)\s*\{',                                   # foo() { (method shorthand)
         ]
+        # Skip JS reserved words that might false-positive match
+        reserved = {'function', 'async', 'if', 'for', 'while', 'switch', 'catch'}
         for pattern in patterns:
             for match in re.finditer(pattern, content):
                 name = match.group(1)
-                if name and name not in functions:
+                if name and name not in functions and name not in reserved:
                     functions.append(name)
-        return functions[:30]
+        return functions[:self.MAX_FUNCTIONS]
 
     def _extract_js_classes(self, content: str) -> list:
         """Extract JavaScript class names."""
         classes = []
         for match in re.finditer(r'class\s+(\w+)', content):
             classes.append(match.group(1))
-        return classes[:20]
+        return classes[:self.MAX_CLASSES]
 
     def _build_structure(self):
         """Build directory structure summary."""
@@ -703,23 +898,90 @@ class DocsAgent:
 
         # Find most common/important concepts
         # (In a real implementation, this would be more sophisticated)
-        self.key_concepts = list(set(all_classes))[:15]
+        self.key_concepts = list(set(all_classes))[:self.MAX_KEY_CONCEPTS]
+
+    def _load_state(self) -> Optional[dict]:
+        """Load previously saved analysis state for incremental updates.
+
+        Returns:
+            Dict with cached state including file_hashes and file_data,
+            or None if no valid state exists.
+        """
+        if not self.state_file.exists():
+            return None
+
+        try:
+            state = json.loads(self.state_file.read_text())
+            # Validate required fields
+            if 'file_hashes' not in state:
+                return None
+            return state
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def _restore_file_info(self, data: dict) -> FileInfo:
+        """Restore a FileInfo object from cached data."""
+        return FileInfo(
+            path=data['path'],
+            size=data['size'],
+            lines=data['lines'],
+            language=data['language'],
+            imports=data.get('imports', []),
+            exports=data.get('exports', []),
+            functions=data.get('functions', []),
+            classes=data.get('classes', []),
+            methods=data.get('methods', {}),
+            description=data.get('description', ''),
+            class_docstrings=data.get('class_docstrings', {}),
+            function_docstrings=data.get('function_docstrings', {}),
+            signatures=data.get('signatures', {}),
+        )
 
     def _save_state(self):
-        """Save analysis state for incremental updates."""
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        """Save analysis state for incremental updates.
 
-        state = {
-            'analyzed_at': datetime.now(timezone.utc).isoformat(),
-            'files_count': len(self.files),
-            'total_lines': self.structure['total_lines'],
-            'file_hashes': {
-                path: f"{info.size}:{info.lines}"
-                for path, info in self.files.items()
-            },
-        }
+        Uses atomic write (tmp file + rename) to prevent corruption if
+        the process is interrupted mid-write. Saves file data so unchanged
+        files can be restored without re-parsing.
+        """
+        try:
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
-        self.state_file.write_text(json.dumps(state, indent=2))
+            # Serialize FileInfo objects to dicts
+            file_data = {}
+            for path, info in self.files.items():
+                file_data[path] = {
+                    'path': info.path,
+                    'size': info.size,
+                    'lines': info.lines,
+                    'language': info.language,
+                    'imports': info.imports,
+                    'exports': info.exports,
+                    'functions': info.functions,
+                    'classes': info.classes,
+                    'methods': info.methods,
+                    'description': info.description,
+                    'signatures': info.signatures,
+                }
+
+            state = {
+                'analyzed_at': datetime.now(timezone.utc).isoformat(),
+                'files_count': len(self.files),
+                'total_lines': self.structure['total_lines'],
+                'file_hashes': {
+                    path: f"{info.size}:{info.lines}"
+                    for path, info in self.files.items()
+                },
+                'file_data': file_data,
+            }
+
+            # Atomic write: write to tmp file then rename
+            tmp_file = self.state_file.with_suffix('.tmp')
+            tmp_file.write_text(json.dumps(state, indent=2))
+            tmp_file.rename(self.state_file)
+        except OSError:
+            # Log warning but don't fail analysis - state is optional
+            pass
 
     # ========================================================================
     # Documentation Generation
@@ -761,6 +1023,288 @@ class DocsAgent:
 
         return content
 
+    # ------------------------------------------------------------------------
+    # Section Helpers (reusable across generation methods)
+    # ------------------------------------------------------------------------
+
+    def _section_project_structure(self, as_code_block: bool = False) -> list:
+        """Generate project structure section.
+
+        Args:
+            as_code_block: If True, wrap in code block (for architecture).
+                          If False, use bullet list (for onboarding).
+
+        Returns:
+            List of lines for the section.
+        """
+        lines = []
+        dir_limit = {'junior': 999, 'mid': 10, 'senior': 5}[self.skill_level]
+        dirs_to_show = sorted(self.structure['directories'].items())[:dir_limit]
+
+        if as_code_block:
+            lines.append("```")
+            for dir_path, info in dirs_to_show:
+                if dir_path == '.':
+                    continue
+                indent = "  " * dir_path.count('/')
+                langs = ', '.join(info['languages'])
+                lines.append(f"{indent}{dir_path}/ ({info['files']} files, {langs})")
+            lines.append("```")
+        else:
+            for dir_path, info in dirs_to_show:
+                if dir_path == '.':
+                    lines.append("- **Root**: Configuration files, entry points")
+                else:
+                    if self._is_level('junior'):
+                        langs = ', '.join(info['languages'])
+                        lines.append(f"- **{dir_path}/**: {info['files']} {langs} files")
+                    else:
+                        lines.append(f"- **{dir_path}/**: {info['files']} files")
+
+        return lines
+
+    def _section_dependencies(self) -> list:
+        """Generate external dependencies section.
+
+        Returns:
+            List of lines listing external (non-stdlib, non-internal) imports.
+        """
+        lines = []
+        all_imports = set()
+        for info in self.files.values():
+            all_imports.update(info.imports)
+
+        # Filter to external dependencies
+        internal_modules = {Path(p).stem for p in self.files.keys()}
+        internal_packages = set()
+        for p in self.files.keys():
+            parts = Path(p).parts
+            for part in parts:
+                clean_part = part.replace('.py', '')
+                if clean_part:
+                    internal_packages.add(clean_part)
+
+        if self.metadata.name:
+            internal_packages.add(self.metadata.name)
+
+        external = sorted(all_imports - internal_modules - internal_packages)[:self.MAX_DEPENDENCIES]
+
+        if external:
+            if self._is_level('junior'):
+                lines.append("External packages this project uses:")
+                lines.append("")
+            for imp in external:
+                lines.append(f"- `{imp}`")
+        else:
+            lines.append("Standard library only (no external dependencies).")
+
+        return lines
+
+    def _onboarding_prerequisites(self, languages: set) -> list:
+        """Generate prerequisites section for onboarding.
+
+        Args:
+            languages: Set of detected languages (e.g., {'python', 'javascript'})
+
+        Returns:
+            List of lines for prerequisites.
+        """
+        lines = []
+        python_version = self.metadata.python_requires or "3.10+"
+        python_version = python_version.replace('>=', '').strip()
+        if not python_version.endswith('+'):
+            python_version += '+'
+
+        if 'python' in languages:
+            if self._is_level('junior'):
+                lines.extend([
+                    f"- **Python {python_version}** - [Download Python](https://python.org/downloads/)",
+                    "  - Verify with: `python --version` or `python3 --version`",
+                    "- **pip** - Usually comes with Python. Verify with: `pip --version`",
+                    "- **Git** - [Download Git](https://git-scm.com/downloads)",
+                ])
+            else:
+                lines.extend([
+                    f"- Python {python_version}",
+                    "- pip or pipenv",
+                ])
+
+        if 'javascript' in languages or 'typescript' in languages:
+            if self._is_level('junior'):
+                lines.extend([
+                    "- **Node.js 18+** - [Download Node.js](https://nodejs.org/)",
+                    "  - Verify with: `node --version`",
+                    "- **npm** - Comes with Node.js. Verify with: `npm --version`",
+                ])
+            else:
+                lines.extend([
+                    "- Node.js 18+",
+                    "- npm or yarn",
+                ])
+
+        return lines
+
+    def _onboarding_setup(self, languages: set, repo_url: str, project_name: str) -> list:
+        """Generate setup instructions for onboarding.
+
+        Args:
+            languages: Set of detected languages
+            repo_url: Repository URL
+            project_name: Project name
+
+        Returns:
+            List of lines for setup section.
+        """
+        lines = []
+
+        if 'python' in languages:
+            lines.extend([
+                "### Setup",
+                "",
+                "```bash",
+                "# Clone the repository",
+                f"git clone {repo_url}",
+                f"cd {project_name}",
+                "",
+                "# Create virtual environment",
+                "python -m venv venv",
+                "source venv/bin/activate  # or venv\\Scripts\\activate on Windows",
+                "",
+                "# Install dependencies",
+                "pip install -e .",
+                "```",
+                "",
+            ])
+
+            if self._is_level('junior'):
+                lines.extend([
+                    "#### Troubleshooting Setup",
+                    "",
+                    "**\"python\" command not found?**",
+                    "- Try `python3` instead of `python`",
+                    "- Make sure Python is in your PATH",
+                    "",
+                    "**Permission denied on `source venv/bin/activate`?**",
+                    "- Make sure you're in the project directory",
+                    "- On Windows, use: `venv\\Scripts\\activate`",
+                    "",
+                    "**pip install fails?**",
+                    "- Make sure your virtual environment is activated (you should see `(venv)` in your prompt)",
+                    "- Try: `pip install --upgrade pip` first",
+                    "",
+                ])
+
+        if 'javascript' in languages or 'typescript' in languages:
+            lines.extend([
+                "### Setup",
+                "",
+                "```bash",
+                "# Clone and install",
+                f"git clone {repo_url}",
+                f"cd {project_name}",
+                "npm install",
+                "```",
+                "",
+            ])
+
+        return lines
+
+    def _onboarding_workflow(self) -> list:
+        """Generate development workflow section for onboarding.
+
+        Returns:
+            List of lines for workflow section.
+        """
+        lines = ["## Development Workflow", ""]
+
+        if self._is_level('junior'):
+            lines.extend([
+                "Follow these steps when making changes:",
+                "",
+                "### 1. Create a feature branch",
+                "",
+                "```bash",
+                "# Start from the main branch",
+                "git checkout main",
+                "git pull origin main",
+                "",
+                "# Create your feature branch",
+                "git checkout -b feature/my-feature",
+                "```",
+                "",
+                "### 2. Make your changes",
+                "",
+                "- Edit the files you need to change",
+                "- Test your changes locally",
+                "- Commit frequently with clear messages",
+                "",
+                "```bash",
+                "git add .",
+                "git commit -m \"Add: brief description of change\"",
+                "```",
+                "",
+                "### 3. Run tests",
+                "",
+                "Before submitting, make sure all tests pass.",
+                "",
+                "### 4. Submit a pull request",
+                "",
+                "```bash",
+                "git push origin feature/my-feature",
+                "```",
+                "",
+                "Then open a Pull Request on GitHub.",
+                "",
+            ])
+        else:
+            lines.extend([
+                "1. Create a feature branch: `git checkout -b feature/my-feature`",
+                "2. Make your changes",
+                "3. Run tests (if available)",
+                "4. Submit a pull request",
+                "",
+            ])
+
+        return lines
+
+    def _onboarding_pitfalls(self) -> list:
+        """Generate common pitfalls section (junior only).
+
+        Returns:
+            List of lines for pitfalls section, or empty list if not junior.
+        """
+        if not self._is_level('junior'):
+            return []
+
+        return [
+            "## Common Pitfalls",
+            "",
+            "Avoid these common mistakes:",
+            "",
+            "### 1. Forgetting to activate the virtual environment",
+            "",
+            "**Symptom:** `ModuleNotFoundError` when running code",
+            "",
+            "**Solution:** Run `source venv/bin/activate` (or `venv\\Scripts\\activate` on Windows)",
+            "",
+            "### 2. Committing to main branch directly",
+            "",
+            "**Symptom:** Push rejected or PR conflicts",
+            "",
+            "**Solution:** Always create a feature branch first",
+            "",
+            "### 3. Not pulling latest changes",
+            "",
+            "**Symptom:** Merge conflicts when submitting PR",
+            "",
+            "**Solution:** Run `git pull origin main` before starting work",
+            "",
+        ]
+
+    # ------------------------------------------------------------------------
+    # Main Generation Methods
+    # ------------------------------------------------------------------------
+
     def _generate_architecture(self) -> str:
         """Generate architecture documentation based on skill level."""
         lines = [
@@ -799,26 +1343,15 @@ class DocsAgent:
                 "## Project Structure",
                 "",
             ])
-
-            # Directory overview
-            lines.append("```")
-            dirs_to_show = self._level_limit(
-                sorted(self.structure['directories'].items()),
-                junior=999, mid=10, senior=5
-            )
-            for dir_path, info in dirs_to_show:
-                if dir_path == '.':
-                    continue
-                indent = "  " * dir_path.count('/')
-                langs = ', '.join(info['languages'])
-                lines.append(f"{indent}{dir_path}/ ({info['files']} files, {langs})")
-            lines.append("```")
+            lines.extend(self._section_project_structure(as_code_block=True))
             lines.append("")
 
             # Junior: explain each directory
             if self._is_level('junior'):
                 lines.append("**Directory purposes:**")
                 lines.append("")
+                dir_limit = {'junior': 999, 'mid': 10, 'senior': 5}[self.skill_level]
+                dirs_to_show = sorted(self.structure['directories'].items())[:dir_limit]
                 for dir_path, info in dirs_to_show:
                     if dir_path == '.':
                         continue
@@ -889,50 +1422,26 @@ class DocsAgent:
         # Dependencies (from imports)
         lines.append("## Dependencies")
         lines.append("")
-
-        all_imports = set()
-        for info in self.files.values():
-            all_imports.update(info.imports)
-
-        # Filter to external dependencies (stdlib already filtered in extraction)
-        internal_modules = {Path(p).stem for p in self.files.keys()}
-        # Also filter out internal package names from directory structure
-        internal_packages = set()
-        for p in self.files.keys():
-            parts = Path(p).parts
-            for part in parts:
-                # Add each directory component as potential internal package
-                clean_part = part.replace('.py', '')
-                if clean_part:
-                    internal_packages.add(clean_part)
-
-        # Also add the project name from metadata as internal
-        if self.metadata.name:
-            internal_packages.add(self.metadata.name)
-
-        external = sorted(all_imports - internal_modules - internal_packages)[:20]
-
-        if external:
-            if self._is_level('junior'):
-                lines.append("External packages this project uses:")
-                lines.append("")
-            for imp in external:
-                lines.append(f"- `{imp}`")
-        else:
-            lines.append("Standard library only (no external dependencies).")
+        lines.extend(self._section_dependencies())
         lines.append("")
 
         return '\n'.join(lines)
 
     def _generate_onboarding(self) -> str:
-        """Generate onboarding guide for new developers based on skill level."""
+        """Generate onboarding guide for new developers based on skill level.
+
+        Uses helper methods for each section to keep this method readable.
+        """
         project_name = self.metadata.name or self.project_dir.resolve().name
+        repo_url = self.metadata.repository or '<repo-url>'
+        languages = set(self.structure['file_types'].keys())
 
         lines = [
             "# Developer Onboarding Guide",
             "",
         ]
 
+        # Welcome/intro based on level
         if self.metadata.description:
             if self._is_level('junior'):
                 lines.extend([
@@ -955,9 +1464,8 @@ class DocsAgent:
                     "",
                 ])
 
-        # Senior: minimal setup, just the essentials
+        # Senior: minimal quick start and return early
         if self._is_level('senior'):
-            repo_url = self.metadata.repository or '<repo-url>'
             lines.extend([
                 "## Quick Start",
                 "",
@@ -970,141 +1478,42 @@ class DocsAgent:
             ])
             return '\n'.join(lines)
 
+        # Prerequisites
         lines.extend([
             "## Getting Started",
             "",
             "### Prerequisites",
             "",
         ])
+        lines.extend(self._onboarding_prerequisites(languages))
+        lines.append("")
 
-        # Detect language and add setup instructions
-        languages = set(self.structure['file_types'].keys())
+        # Setup instructions
+        lines.extend(self._onboarding_setup(languages, repo_url, project_name))
 
-        # Use actual Python version requirement if available
-        python_version = self.metadata.python_requires or "3.10+"
-        python_version = python_version.replace('>=', '').strip()
-        if not python_version.endswith('+'):
-            python_version += '+'
-
-        # Use actual repo URL if available
-        repo_url = self.metadata.repository or '<repo-url>'
-
-        if 'python' in languages:
-            if self._is_level('junior'):
-                lines.extend([
-                    f"- **Python {python_version}** - [Download Python](https://python.org/downloads/)",
-                    "  - Verify with: `python --version` or `python3 --version`",
-                    "- **pip** - Usually comes with Python. Verify with: `pip --version`",
-                    "- **Git** - [Download Git](https://git-scm.com/downloads)",
-                    "",
-                ])
-            else:
-                lines.extend([
-                    f"- Python {python_version}",
-                    "- pip or pipenv",
-                    "",
-                ])
-
-            lines.extend([
-                "### Setup",
-                "",
-                "```bash",
-                "# Clone the repository",
-                f"git clone {repo_url}",
-                f"cd {project_name}",
-                "",
-                "# Create virtual environment",
-                "python -m venv venv",
-                "source venv/bin/activate  # or venv\\Scripts\\activate on Windows",
-                "",
-                "# Install dependencies",
-                "pip install -e .",
-                "```",
-                "",
-            ])
-
-            # Junior: Add troubleshooting tips
-            if self._is_level('junior'):
-                lines.extend([
-                    "#### Troubleshooting Setup",
-                    "",
-                    "**\"python\" command not found?**",
-                    "- Try `python3` instead of `python`",
-                    "- Make sure Python is in your PATH",
-                    "",
-                    "**Permission denied on `source venv/bin/activate`?**",
-                    "- Make sure you're in the project directory",
-                    "- On Windows, use: `venv\\Scripts\\activate`",
-                    "",
-                    "**pip install fails?**",
-                    "- Make sure your virtual environment is activated (you should see `(venv)` in your prompt)",
-                    "- Try: `pip install --upgrade pip` first",
-                    "",
-                ])
-
-        if 'javascript' in languages or 'typescript' in languages:
-            if self._is_level('junior'):
-                lines.extend([
-                    "- **Node.js 18+** - [Download Node.js](https://nodejs.org/)",
-                    "  - Verify with: `node --version`",
-                    "- **npm** - Comes with Node.js. Verify with: `npm --version`",
-                    "",
-                ])
-            else:
-                lines.extend([
-                    "- Node.js 18+",
-                    "- npm or yarn",
-                    "",
-                ])
-
-            lines.extend([
-                "### Setup",
-                "",
-                "```bash",
-                "# Clone and install",
-                f"git clone {repo_url}",
-                f"cd {project_name}",
-                "npm install",
-                "```",
-                "",
-            ])
-
-        # Project structure orientation (skip for senior, already returned)
-        dir_limit = {'junior': 999, 'mid': 10, 'senior': 5}[self.skill_level]
+        # Project structure
         lines.extend([
             "## Project Structure",
             "",
             "Here's how the codebase is organized:",
             "",
         ])
-
-        for dir_path, info in sorted(self.structure['directories'].items())[:dir_limit]:
-            if dir_path == '.':
-                lines.append(f"- **Root**: Configuration files, entry points")
-            else:
-                if self._is_level('junior'):
-                    langs = ', '.join(info['languages'])
-                    lines.append(f"- **{dir_path}/**: {info['files']} {langs} files")
-                else:
-                    lines.append(f"- **{dir_path}/**: {info['files']} files")
-
+        lines.extend(self._section_project_structure(as_code_block=False))
         lines.append("")
 
-        # Key files to understand
+        # Key files
         lines.extend([
             "## Key Files to Understand",
             "",
             "Start by reading these files to understand the codebase:",
             "",
         ])
-
         ep_limit = {'junior': 10, 'mid': 5, 'senior': 3}[self.skill_level]
         for i, ep in enumerate(self.entry_points[:ep_limit], 1):
             lines.append(f"{i}. `{ep['path']}` - {ep['description']}")
-
         lines.append("")
 
-        # Junior: Add Quick Examples section
+        # Junior: Quick examples
         if self._is_level('junior'):
             lines.extend([
                 "## Quick Examples",
@@ -1117,9 +1526,7 @@ class DocsAgent:
                 f"# Make sure {project_name} is installed",
             ])
             if 'python' in languages:
-                lines.extend([
-                    f"python -c \"import {project_name.replace('-', '_')}; print('OK')\"",
-                ])
+                lines.append(f"python -c \"import {project_name.replace('-', '_')}; print('OK')\"")
             lines.extend([
                 "```",
                 "",
@@ -1132,92 +1539,15 @@ class DocsAgent:
                 lines.append("pytest  # or python -m pytest")
             elif 'javascript' in languages or 'typescript' in languages:
                 lines.append("npm test")
-            lines.extend([
-                "```",
-                "",
-            ])
+            lines.extend(["```", ""])
 
         # Development workflow
-        lines.extend([
-            "## Development Workflow",
-            "",
-        ])
+        lines.extend(self._onboarding_workflow())
 
-        if self._is_level('junior'):
-            lines.extend([
-                "Follow these steps when making changes:",
-                "",
-                "### 1. Create a feature branch",
-                "",
-                "```bash",
-                "# Start from the main branch",
-                "git checkout main",
-                "git pull origin main",
-                "",
-                "# Create your feature branch",
-                "git checkout -b feature/my-feature",
-                "```",
-                "",
-                "### 2. Make your changes",
-                "",
-                "- Edit the files you need to change",
-                "- Test your changes locally",
-                "- Commit frequently with clear messages",
-                "",
-                "```bash",
-                "git add .",
-                "git commit -m \"Add: brief description of change\"",
-                "```",
-                "",
-                "### 3. Run tests",
-                "",
-                "Before submitting, make sure all tests pass.",
-                "",
-                "### 4. Submit a pull request",
-                "",
-                "```bash",
-                "git push origin feature/my-feature",
-                "```",
-                "",
-                "Then open a Pull Request on GitHub.",
-                "",
-            ])
-        else:
-            lines.extend([
-                "1. Create a feature branch: `git checkout -b feature/my-feature`",
-                "2. Make your changes",
-                "3. Run tests (if available)",
-                "4. Submit a pull request",
-                "",
-            ])
+        # Common pitfalls (junior only - returns empty list for others)
+        lines.extend(self._onboarding_pitfalls())
 
-        # Junior: Add Common Pitfalls section
-        if self._is_level('junior'):
-            lines.extend([
-                "## Common Pitfalls",
-                "",
-                "Avoid these common mistakes:",
-                "",
-                "### 1. Forgetting to activate the virtual environment",
-                "",
-                "**Symptom:** `ModuleNotFoundError` when running code",
-                "",
-                "**Solution:** Run `source venv/bin/activate` (or `venv\\Scripts\\activate` on Windows)",
-                "",
-                "### 2. Committing to main branch directly",
-                "",
-                "**Symptom:** Push rejected or PR conflicts",
-                "",
-                "**Solution:** Always create a feature branch first",
-                "",
-                "### 3. Not pulling latest changes",
-                "",
-                "**Symptom:** Merge conflicts when submitting PR",
-                "",
-                "**Solution:** Run `git pull origin main` before starting work",
-                "",
-            ])
-
+        # Getting help
         lines.extend([
             "## Getting Help",
             "",
@@ -1567,10 +1897,22 @@ def cmd_docs(args):
     )
 
     if args.docs_command == 'analyze':
-        print("Analyzing codebase...")
-        result = agent.analyze(verbose=args.verbose if hasattr(args, 'verbose') else False)
+        force = getattr(args, 'force', False)
+        if force:
+            print("Analyzing codebase (forced full re-analysis)...")
+        else:
+            print("Analyzing codebase...")
+        verbose = getattr(args, 'verbose', False)
+        result = agent.analyze(verbose=verbose, force=force)
         print(f"\n✓ Analysis complete:")
-        print(f"  Files: {result['files_analyzed']}")
+        print(f"  Total files: {result['total_files']}")
+        if result.get('files_cached', 0) > 0:
+            print(f"  Cached: {result['files_cached']} (unchanged)")
+            print(f"  Analyzed: {result['files_analyzed']} (new/changed)")
+        else:
+            print(f"  Analyzed: {result['files_analyzed']}")
+        if result.get('files_removed', 0) > 0:
+            print(f"  Removed: {result['files_removed']} (deleted files)")
         print(f"  Lines: {result['total_lines']:,}")
         print(f"  Directories: {result['directories']}")
         print(f"  Entry points: {result['entry_points']}")

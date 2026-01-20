@@ -1685,6 +1685,7 @@ Examples:
     docs_analyze = docs_sub.add_parser('analyze', help='Analyze codebase structure')
     docs_analyze.add_argument('path', nargs='?', help='Project path')
     docs_analyze.add_argument('--verbose', '-v', action='store_true')
+    docs_analyze.add_argument('--force', '-f', action='store_true', help='Force full re-analysis (ignore cache)')
 
     docs_generate = docs_sub.add_parser('generate', help='Generate documentation')
     docs_generate.add_argument('--type', '-t', default='architecture',
