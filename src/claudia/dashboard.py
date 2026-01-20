@@ -37,42 +37,28 @@ except ImportError:
         return True
 
 
-def _supports_color() -> bool:
-    """Check if the terminal supports ANSI color codes."""
-    # Check if stdout is a TTY
-    if not hasattr(sys.stdout, 'isatty') or not sys.stdout.isatty():
-        return False
+# Import colors from shared module
+try:
+    from claudia.colors import Colors, priority_str
+except ImportError:
+    # Fallback for standalone usage
+    class Colors:
+        """ANSI color codes - fallback for standalone usage."""
+        _enabled = True
+        RESET = "\033[0m"
+        BOLD = "\033[1m"
+        DIM = "\033[2m"
+        RED = "\033[31m"
+        GREEN = "\033[32m"
+        YELLOW = "\033[33m"
+        BLUE = "\033[34m"
+        MAGENTA = "\033[35m"
+        CYAN = "\033[36m"
 
-    # Check for dumb terminal
-    term = os.environ.get('TERM', '')
-    if term == 'dumb':
-        return False
-
-    # Check for NO_COLOR environment variable (standard convention)
-    if 'NO_COLOR' in os.environ:
-        return False
-
-    # Check for FORCE_COLOR to override detection
-    if 'FORCE_COLOR' in os.environ:
-        return True
-
-    # Most modern terminals support color
-    return True
-
-
-class Colors:
-    """ANSI color codes - automatically disabled on unsupported terminals."""
-    _enabled = _supports_color()
-
-    RESET = "\033[0m" if _enabled else ""
-    BOLD = "\033[1m" if _enabled else ""
-    DIM = "\033[2m" if _enabled else ""
-    RED = "\033[31m" if _enabled else ""
-    GREEN = "\033[32m" if _enabled else ""
-    YELLOW = "\033[33m" if _enabled else ""
-    BLUE = "\033[34m" if _enabled else ""
-    MAGENTA = "\033[35m" if _enabled else ""
-    CYAN = "\033[36m" if _enabled else ""
+    def priority_str(p: int) -> str:
+        colors = {0: Colors.RED, 1: Colors.YELLOW, 2: Colors.RESET, 3: Colors.DIM}
+        labels = {0: "P0", 1: "P1", 2: "P2", 3: "P3"}
+        return f"{colors.get(p, '')}{labels.get(p, 'P?')}{Colors.RESET}"
 
 
 def clear():
@@ -106,12 +92,6 @@ def time_ago(iso_time: str) -> str:
         return f"{round(seconds / 86400)}d"
     except (ValueError, TypeError, AttributeError):
         return "?"
-
-
-def priority_str(p: int) -> str:
-    colors = {0: Colors.RED, 1: Colors.YELLOW, 2: Colors.RESET, 3: Colors.DIM}
-    labels = {0: "P0", 1: "P1", 2: "P2", 3: "P3"}
-    return f"{colors.get(p, '')}{labels.get(p, 'P?')}{Colors.RESET}"
 
 
 def load_state_direct(state_dir: Path) -> dict:
@@ -194,7 +174,11 @@ def render(state_dir: Path):
         print(f"   Status: {' │ '.join(status_parts)}")
     print()
     
-    # Sessions
+    # Sessions (with timeout warnings)
+    # Timeout thresholds in seconds
+    STALE_WARNING_THRESHOLD = 60  # Warning if no heartbeat for 60s
+    STALE_DANGER_THRESHOLD = 120  # Danger if no heartbeat for 120s
+
     print(f"{Colors.BOLD}👥 SESSIONS{Colors.RESET} ({len(sessions)} active)")
     if not sessions:
         print(f"   {Colors.DIM}No active sessions{Colors.RESET}")
@@ -202,11 +186,31 @@ def render(state_dir: Path):
         for sid, s in sessions.items():
             role = s.get('role', 'worker')
             role_badge = f"{Colors.MAGENTA}MAIN{Colors.RESET}" if role == 'main' else f"{Colors.CYAN}worker{Colors.RESET}"
-            hb = time_ago(s.get('last_heartbeat', ''))
+            hb_time = s.get('last_heartbeat', '')
+            hb = time_ago(hb_time)
             context = s.get('context', '')[:30]
             working = s.get('working_on', [])
-            
-            print(f"   {Colors.BOLD}{sid}{Colors.RESET} [{role_badge}] {Colors.DIM}{context}{Colors.RESET}")
+
+            # Check for stale session
+            stale_badge = ""
+            if hb_time:
+                try:
+                    if hb_time.endswith('Z'):
+                        hb_time = hb_time[:-1] + '+00:00'
+                    dt = datetime.fromisoformat(hb_time)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    now = datetime.now(timezone.utc)
+                    seconds_since_hb = (now - dt).total_seconds()
+
+                    if seconds_since_hb >= STALE_DANGER_THRESHOLD:
+                        stale_badge = f" {Colors.RED}⚠ STALE ({hb} ago){Colors.RESET}"
+                    elif seconds_since_hb >= STALE_WARNING_THRESHOLD:
+                        stale_badge = f" {Colors.YELLOW}⚠ {hb} ago{Colors.RESET}"
+                except (ValueError, TypeError, AttributeError):
+                    pass
+
+            print(f"   {Colors.BOLD}{sid}{Colors.RESET} [{role_badge}]{stale_badge} {Colors.DIM}{context}{Colors.RESET}")
             if working:
                 print(f"      └─ Working: {', '.join(working)}")
     print()

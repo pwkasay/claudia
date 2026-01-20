@@ -49,3 +49,8 @@ Thumbs.db
 
 # Docs build
 docs/_build/
+
+# Claudia agent state
+.agent-state/sessions/*.json
+.agent-state/.parallel-mode
+.agent-state/coordinator.pid

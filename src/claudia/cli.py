@@ -23,6 +23,7 @@ from pathlib import Path
 
 from claudia import __version__
 from claudia.agent import Agent, is_task_ready
+from claudia.colors import Colors, priority_str as _color_priority, status_str as _color_status
 
 
 # ============================================================================
@@ -74,7 +75,7 @@ def _format_duration(iso_start: str) -> str:
         return "?"
 
 
-def _format_task_short(task: dict) -> str:
+def _format_task_short(task: dict, use_color: bool = True) -> str:
     """Format task as a short one-liner."""
     task_id = task.get('id', '?')
     title = task.get('title', 'Untitled')[:50]
@@ -82,26 +83,38 @@ def _format_task_short(task: dict) -> str:
     labels = task.get('labels', [])
 
     parts = [f'{task_id}: "{title}"']
-    parts.append(f"[P{priority}]")
+    if use_color and Colors.is_enabled():
+        parts.append(f"[{_color_priority(priority)}]")
+    else:
+        parts.append(f"[P{priority}]")
     if labels:
-        parts.append(f"[{', '.join(labels[:3])}]")
+        label_str = ', '.join(labels[:3])
+        if use_color and Colors.is_enabled():
+            parts.append(f"{Colors.DIM}[{label_str}]{Colors.RESET}")
+        else:
+            parts.append(f"[{label_str}]")
 
     return ' '.join(parts)
 
 
-def _format_task_status_summary(status_counts: dict, ready_count: int) -> str:
+def _format_task_status_summary(status_counts: dict, ready_count: int, use_color: bool = True) -> str:
     """Format task status counts as summary string."""
     parts = []
+    use_c = use_color and Colors.is_enabled()
     if status_counts.get('open'):
-        parts.append(f"{status_counts['open']} open")
+        count = status_counts['open']
+        parts.append(f"{Colors.CYAN}{count} open{Colors.RESET}" if use_c else f"{count} open")
     if ready_count:
-        parts.append(f"{ready_count} ready")
+        parts.append(f"{Colors.GREEN}{ready_count} ready{Colors.RESET}" if use_c else f"{ready_count} ready")
     if status_counts.get('in_progress'):
-        parts.append(f"{status_counts['in_progress']} in progress")
+        count = status_counts['in_progress']
+        parts.append(f"{Colors.YELLOW}{count} in progress{Colors.RESET}" if use_c else f"{count} in progress")
     if status_counts.get('done'):
-        parts.append(f"{status_counts['done']} done")
+        count = status_counts['done']
+        parts.append(f"{Colors.GREEN}{count} done{Colors.RESET}" if use_c else f"{count} done")
     if status_counts.get('blocked'):
-        parts.append(f"{status_counts['blocked']} blocked")
+        count = status_counts['blocked']
+        parts.append(f"{Colors.RED}{count} blocked{Colors.RESET}" if use_c else f"{count} blocked")
     return ', '.join(parts) if parts else "no tasks"
 
 
@@ -433,6 +446,95 @@ def cmd_update(args):
 
 
 # ============================================================================
+# Interactive Mode
+# ============================================================================
+
+def _interactive_create(agent, use_json):
+    """Guided task creation wizard with prompts."""
+    print("\n━━━ Create New Task ━━━\n")
+
+    # Title (required)
+    while True:
+        title = input("Title: ").strip()
+        if title:
+            break
+        print("  Title is required. Please enter a title.")
+
+    # Priority selection
+    print("\nPriority:")
+    print("  0) P0 - Critical (urgent, blocking)")
+    print("  1) P1 - High (important)")
+    print("  2) P2 - Medium (default)")
+    print("  3) P3 - Low (nice to have)")
+    priority_input = input("Select priority [2]: ").strip()
+    if priority_input in ('0', '1', '2', '3'):
+        priority = int(priority_input)
+    else:
+        priority = 2
+    print(f"  → {_format_priority(priority)}")
+
+    # Labels (optional)
+    print("\nLabels (comma-separated, or press Enter to skip):")
+    labels_input = input("Labels: ").strip()
+    if labels_input:
+        labels = [label.strip() for label in labels_input.split(',') if label.strip()]
+    else:
+        labels = []
+    if labels:
+        print(f"  → {', '.join(labels)}")
+    else:
+        print("  → No labels")
+
+    # Description (optional, multi-line)
+    print("\nDescription (optional, press Enter twice to finish):")
+    desc_lines = []
+    while True:
+        line = input()
+        if line == '' and (not desc_lines or desc_lines[-1] == ''):
+            break
+        desc_lines.append(line)
+
+    # Remove trailing empty line if present
+    while desc_lines and desc_lines[-1] == '':
+        desc_lines.pop()
+    description = '\n'.join(desc_lines)
+
+    if description:
+        print(f"  → Description added ({len(description)} chars)")
+    else:
+        print("  → No description")
+
+    # Confirm
+    print("\n━━━ Review ━━━")
+    print(f"  Title:       {title}")
+    print(f"  Priority:    {_format_priority(priority)}")
+    print(f"  Labels:      {', '.join(labels) if labels else '(none)'}")
+    if description:
+        preview = description[:50] + '...' if len(description) > 50 else description
+        print(f"  Description: {preview}")
+
+    confirm = input("\nCreate this task? [Y/n]: ").strip().lower()
+    if confirm in ('n', 'no'):
+        print("Cancelled.")
+        return None
+
+    # Create the task
+    task = agent.create_task(
+        title=title,
+        description=description,
+        priority=priority,
+        labels=labels,
+    )
+
+    if use_json:
+        print(json.dumps(task, indent=2))
+    else:
+        print(f"\n✓ Created {_format_task_short(task)}")
+
+    return task
+
+
+# ============================================================================
 # Task Commands (from original agent.py)
 # ============================================================================
 
@@ -478,8 +580,9 @@ def cmd_tasks(args, agent, use_json):
                 print("No tasks found")
         else:
             for task in tasks:
-                status_str = task.get('status', 'open')
-                print(f"  {_format_task_short(task)} [{status_str}]")
+                status = task.get('status', 'open')
+                status_display = _color_status(status) if Colors.is_enabled() else status
+                print(f"  {_format_task_short(task)} [{status_display}]")
             print(f"\n{len(tasks)} task(s)")
 
 
@@ -524,6 +627,21 @@ def cmd_show(args, agent, use_json):
         if branch:
             print(f"Branch:      {branch}")
 
+        # v2: Show parent task if this is a subtask
+        parent_id = task.get('parent_id')
+        if parent_id:
+            print(f"Parent:      {parent_id}")
+
+        # v2: Show subtask progress if this task has subtasks
+        subtasks = task.get('subtasks', [])
+        if subtasks:
+            progress = agent.get_subtask_progress(task['id'])
+            if progress:
+                pct = progress.get('percentage', 0)
+                total = progress.get('total', 0)
+                completed = progress.get('completed', 0)
+                print(f"Subtasks:    {completed}/{total} completed ({pct}%)")
+
         description = task.get('description', '')
         if description:
             print(f"\nDescription:")
@@ -546,6 +664,54 @@ def cmd_show(args, agent, use_json):
 
 def cmd_create(args, agent, use_json, dry_run):
     """Create a task."""
+    # Check for interactive mode
+    interactive = getattr(args, 'interactive', False)
+    if interactive:
+        _interactive_create(agent, use_json)
+        return
+
+    # Check if title is provided (required in non-interactive mode)
+    if not args.title:
+        print("✗ Title is required. Use 'claudia create \"Task title\"' or 'claudia create -i' for interactive mode.")
+        return
+
+    # Check if creating from template
+    template_id = getattr(args, 'template', None)
+
+    if template_id:
+        # Create from template
+        if dry_run:
+            template = agent.get_template(template_id)
+            if template:
+                print(f"Would create task from template {template_id}:")
+                print(f"  Title: {args.title}")
+                print(f"  Template: {template.get('name')}")
+                subtask_count = len(template.get('subtasks', []))
+                if subtask_count:
+                    print(f"  Would create {subtask_count} subtask(s)")
+            else:
+                print(f"Template '{template_id}' not found")
+            return
+
+        task = agent.create_from_template(
+            template_id=template_id,
+            title=args.title,
+            description=args.description if args.description else None,
+            priority=args.priority if args.priority != 2 else None,
+            labels=args.labels if args.labels else None,
+        )
+
+        if use_json:
+            print(json.dumps(task, indent=2))
+        elif task:
+            subtask_count = len(task.get('subtasks', []))
+            print(f"✓ Created {_format_task_short(task)} from template {template_id}")
+            if subtask_count:
+                print(f"  With {subtask_count} subtask(s)")
+        else:
+            print(f"✗ Template '{template_id}' not found")
+        return
+
     if dry_run:
         print(f"Would create task:")
         print(f"  Title:       {args.title}")
@@ -616,83 +782,637 @@ def cmd_next(args, agent, use_json, dry_run):
 
 
 def cmd_complete(args, agent, use_json, dry_run):
-    """Complete a task."""
+    """Complete one or more tasks."""
+    task_ids = args.task_ids
+    tasks = agent.get_tasks()
+    task_map = {t['id']: t for t in tasks}
+    force = getattr(args, 'force', False)
+
+    # Single task: use original detailed behavior
+    if len(task_ids) == 1:
+        task_id = task_ids[0]
+        task_info = task_map.get(task_id)
+
+        if not task_info:
+            print(f"✗ Task '{task_id}' not found")
+            open_tasks = [t for t in tasks if t.get('status') in ('open', 'in_progress')]
+            if open_tasks:
+                print("\nAvailable tasks:")
+                for t in open_tasks[:5]:
+                    print(f"  {_format_task_short(t)} [{t.get('status')}]")
+                if len(open_tasks) > 5:
+                    print(f"  ... and {len(open_tasks) - 5} more")
+            return
+
+        if dry_run:
+            current_status = task_info.get('status', 'open')
+            print(f"Would complete: {_format_task_short(task_info)}")
+            print(f"  Status would change: {current_status} → done")
+            if args.note:
+                print(f"  Note: {args.note}")
+            # Check for subtasks
+            subtasks = task_info.get('subtasks', [])
+            if subtasks:
+                progress = agent.get_subtask_progress(task_id)
+                if progress and progress.get('completed', 0) < progress.get('total', 0):
+                    print(f"  Warning: {progress['total'] - progress['completed']} subtask(s) not complete")
+                    if not force:
+                        print(f"  Use --force to complete anyway")
+            for note in task_info.get('notes', []):
+                if 'Claimed' in note.get('note', ''):
+                    print(f"  Duration: {_format_duration(note['timestamp'])}")
+                    break
+            return
+
+        result = agent.complete_task(task_id, note=args.note, force=force)
+
+        if use_json:
+            print(json.dumps(result, indent=2))
+        elif result.get('success'):
+            duration = ""
+            for note in task_info.get('notes', []):
+                if 'Claimed' in note.get('note', ''):
+                    duration = f" (was in_progress for {_format_duration(note['timestamp'])})"
+                    break
+            print(f"✓ Completed {_format_task_short(task_info)}{duration}")
+        elif result.get('error') == 'incomplete_subtasks':
+            incomplete = result.get('incomplete_subtasks', [])
+            print(f"✗ Cannot complete '{task_id}': {len(incomplete)} subtask(s) not complete")
+            for st in incomplete[:5]:
+                print(f"  • {st['id']}: {st['title']} [{st['status']}]")
+            if len(incomplete) > 5:
+                print(f"  ... and {len(incomplete) - 5} more")
+            print(f"\nUse --force to complete anyway")
+        else:
+            status = task_info.get('status', 'unknown')
+            if status == 'done':
+                print(f"✗ Task '{task_id}' is already completed")
+            elif status == 'open':
+                print(f"✗ Task '{task_id}' is not in progress (claim it first with 'next')")
+            else:
+                print(f"✗ Could not complete '{task_id}' (status: {status})")
+        return
+
+    # Multiple tasks: use bulk operation
+    if dry_run:
+        print(f"Would complete {len(task_ids)} task(s):")
+        for task_id in task_ids:
+            task_info = task_map.get(task_id)
+            if task_info:
+                print(f"  • {_format_task_short(task_info)}")
+            else:
+                print(f"  • {task_id} (not found)")
+        if args.note:
+            print(f"Note: {args.note}")
+        return
+
+    result = agent.bulk_complete(task_ids, note=args.note, force=force)
+
+    if use_json:
+        print(json.dumps(result, indent=2))
+    else:
+        succeeded = result.get('succeeded', [])
+        failed = result.get('failed', [])
+
+        if succeeded:
+            print(f"✓ Completed {len(succeeded)} task(s):")
+            for tid in succeeded:
+                task_info = task_map.get(tid)
+                if task_info:
+                    print(f"  • {_format_task_short(task_info)}")
+                else:
+                    print(f"  • {tid}")
+
+        if failed:
+            print(f"\n✗ Failed to complete {len(failed)} task(s):")
+            for f in failed:
+                tid = f.get('id')
+                error = f.get('error', 'Unknown error')
+                task_info = task_map.get(tid)
+                if error == 'incomplete_subtasks':
+                    incomplete = f.get('incomplete_subtasks', [])
+                    if task_info:
+                        print(f"  • {_format_task_short(task_info)}: {len(incomplete)} subtask(s) not complete")
+                    else:
+                        print(f"  • {tid}: {len(incomplete)} subtask(s) not complete")
+                else:
+                    if task_info:
+                        print(f"  • {_format_task_short(task_info)}: {error}")
+                    else:
+                        print(f"  • {tid}: {error}")
+            if any(f.get('error') == 'incomplete_subtasks' for f in failed):
+                print(f"\nUse --force to complete tasks with incomplete subtasks")
+
+
+def cmd_edit(args, agent, use_json, dry_run):
+    """Edit a task."""
     tasks = agent.get_tasks()
     task_info = next((t for t in tasks if t['id'] == args.task_id), None)
 
     if not task_info:
         print(f"✗ Task '{args.task_id}' not found")
-        open_tasks = [t for t in tasks if t.get('status') in ('open', 'in_progress')]
-        if open_tasks:
-            print("\nAvailable tasks:")
-            for t in open_tasks[:5]:
-                print(f"  {_format_task_short(t)} [{t.get('status')}]")
-            if len(open_tasks) > 5:
-                print(f"  ... and {len(open_tasks) - 5} more")
+        return
+
+    # Check if any changes were specified
+    if args.title is None and args.description is None and args.priority is None and args.labels is None:
+        print(f"✗ No changes specified. Use --title, --description, --priority, or --labels")
         return
 
     if dry_run:
-        current_status = task_info.get('status', 'open')
-        print(f"Would complete: {_format_task_short(task_info)}")
-        print(f"  Status would change: {current_status} → done")
-        if args.note:
-            print(f"  Note: {args.note}")
-        for note in task_info.get('notes', []):
-            if 'Claimed' in note.get('note', ''):
-                print(f"  Duration: {_format_duration(note['timestamp'])}")
-                break
+        print(f"Would edit: {_format_task_short(task_info)}")
+        if args.title:
+            print(f"  Title: {task_info.get('title')} → {args.title}")
+        if args.description:
+            print(f"  Description: (updated)")
+        if args.priority is not None:
+            print(f"  Priority: P{task_info.get('priority', 2)} → P{args.priority}")
+        if args.labels is not None:
+            print(f"  Labels: {task_info.get('labels', [])} → {args.labels}")
         return
 
-    success = agent.complete_task(args.task_id, note=args.note)
+    task = agent.edit_task(
+        task_id=args.task_id,
+        title=args.title,
+        description=args.description,
+        priority=args.priority,
+        labels=args.labels,
+    )
 
     if use_json:
-        print(json.dumps({'success': success, 'task_id': args.task_id}, indent=2))
-    elif success:
-        duration = ""
-        for note in task_info.get('notes', []):
-            if 'Claimed' in note.get('note', ''):
-                duration = f" (was in_progress for {_format_duration(note['timestamp'])})"
-                break
-        print(f"✓ Completed {_format_task_short(task_info)}{duration}")
+        print(json.dumps(task or {'error': 'Task not found'}, indent=2))
+    elif task:
+        print(f"✓ Updated {_format_task_short(task)}")
     else:
-        status = task_info.get('status', 'unknown')
-        if status == 'done':
-            print(f"✗ Task '{args.task_id}' is already completed")
-        elif status == 'open':
-            print(f"✗ Task '{args.task_id}' is not in progress (claim it first with 'next')")
+        print(f"✗ Could not edit '{args.task_id}'")
+
+
+def cmd_delete(args, agent, use_json, dry_run):
+    """Delete a task."""
+    tasks = agent.get_tasks()
+    task_info = next((t for t in tasks if t['id'] == args.task_id), None)
+
+    if not task_info:
+        print(f"✗ Task '{args.task_id}' not found")
+        return
+
+    subtasks = task_info.get('subtasks', [])
+
+    if dry_run:
+        print(f"Would delete: {_format_task_short(task_info)}")
+        if subtasks:
+            print(f"  Warning: Has {len(subtasks)} subtask(s)")
+            if not args.force:
+                print(f"  Use --force to delete with subtasks")
+        return
+
+    result = agent.delete_task(args.task_id, force=args.force)
+
+    if use_json:
+        print(json.dumps(result, indent=2))
+    elif result.get('success'):
+        deleted_subtasks = result.get('deleted_subtasks', [])
+        if deleted_subtasks:
+            print(f"✓ Deleted {_format_task_short(task_info)} and {len(deleted_subtasks)} subtask(s)")
         else:
-            print(f"✗ Could not complete '{args.task_id}' (status: {status})")
+            print(f"✓ Deleted {_format_task_short(task_info)}")
+    elif result.get('error') == 'has_subtasks':
+        subtasks = result.get('subtasks', [])
+        print(f"✗ Cannot delete '{args.task_id}': has {len(subtasks)} subtask(s)")
+        print(f"  Subtasks: {', '.join(subtasks[:5])}")
+        if len(subtasks) > 5:
+            print(f"  ... and {len(subtasks) - 5} more")
+        print(f"\nUse --force to delete anyway")
+    else:
+        print(f"✗ Could not delete '{args.task_id}'")
 
 
 def cmd_reopen(args, agent, use_json, dry_run):
-    """Reopen a task."""
+    """Reopen one or more tasks."""
+    task_ids = args.task_ids
     tasks = agent.get_tasks()
-    task_info = next((t for t in tasks if t['id'] == args.task_id), None)
+    task_map = {t['id']: t for t in tasks}
 
-    if not task_info:
-        print(f"✗ Task '{args.task_id}' not found")
+    # Single task: use original detailed behavior
+    if len(task_ids) == 1:
+        task_id = task_ids[0]
+        task_info = task_map.get(task_id)
+
+        if not task_info:
+            print(f"✗ Task '{task_id}' not found")
+            return
+
+        old_status = task_info.get('status', 'unknown')
+        if old_status == 'open':
+            print(f"✗ Task '{task_id}' is already open")
+            return
+
+        if dry_run:
+            print(f"Would reopen: {_format_task_short(task_info)}")
+            print(f"  Status would change: {old_status} → open")
+            if args.note:
+                print(f"  Note: {args.note}")
+            return
+
+        success = agent.reopen_task(task_id, note=args.note)
+
+        if use_json:
+            print(json.dumps({'success': success, 'task_id': task_id}, indent=2))
+        elif success:
+            print(f"✓ Reopened {_format_task_short(task_info)} (was {old_status})")
+        else:
+            print(f"✗ Could not reopen '{task_id}'")
         return
 
-    old_status = task_info.get('status', 'unknown')
-    if old_status == 'open':
-        print(f"✗ Task '{args.task_id}' is already open")
-        return
-
+    # Multiple tasks: use bulk operation
     if dry_run:
-        print(f"Would reopen: {_format_task_short(task_info)}")
-        print(f"  Status would change: {old_status} → open")
+        print(f"Would reopen {len(task_ids)} task(s):")
+        for task_id in task_ids:
+            task_info = task_map.get(task_id)
+            if task_info:
+                old_status = task_info.get('status', 'unknown')
+                print(f"  • {_format_task_short(task_info)} (currently {old_status})")
+            else:
+                print(f"  • {task_id} (not found)")
         if args.note:
-            print(f"  Note: {args.note}")
+            print(f"Note: {args.note}")
         return
 
-    success = agent.reopen_task(args.task_id, note=args.note)
+    result = agent.bulk_reopen(task_ids, note=args.note)
 
     if use_json:
-        print(json.dumps({'success': success, 'task_id': args.task_id}, indent=2))
-    elif success:
-        print(f"✓ Reopened {_format_task_short(task_info)} (was {old_status})")
+        print(json.dumps(result, indent=2))
     else:
-        print(f"✗ Could not reopen '{args.task_id}'")
+        succeeded = result.get('succeeded', [])
+        failed = result.get('failed', [])
+
+        if succeeded:
+            print(f"✓ Reopened {len(succeeded)} task(s):")
+            for tid in succeeded:
+                task_info = task_map.get(tid)
+                if task_info:
+                    print(f"  • {_format_task_short(task_info)}")
+                else:
+                    print(f"  • {tid}")
+
+        if failed:
+            print(f"\n✗ Failed to reopen {len(failed)} task(s):")
+            for f in failed:
+                tid = f.get('id')
+                error = f.get('error', 'Unknown error')
+                task_info = task_map.get(tid)
+                if task_info:
+                    print(f"  • {_format_task_short(task_info)}: {error}")
+                else:
+                    print(f"  • {tid}: {error}")
+
+
+def cmd_archive(args, agent, use_json, dry_run):
+    """Archive commands."""
+    if args.archive_command == 'run':
+        result = agent.archive_tasks(days_old=args.days, dry_run=dry_run)
+
+        if use_json:
+            print(json.dumps(result, indent=2))
+        elif result.get('error'):
+            print(f"✗ {result['error']}")
+        elif dry_run:
+            count = result.get('archived', 0)
+            if count == 0:
+                print(f"No tasks older than {args.days} days to archive")
+            else:
+                print(f"Would archive {count} task(s) older than {args.days} days:")
+                for task in result.get('tasks', [])[:5]:
+                    print(f"  {task['id']}: {task['title']}")
+                if count > 5:
+                    print(f"  ... and {count - 5} more")
+        else:
+            count = result.get('archived', 0)
+            if count == 0:
+                print(f"No tasks older than {args.days} days to archive")
+            else:
+                print(f"✓ Archived {count} task(s)")
+
+    elif args.archive_command == 'list':
+        tasks = agent.list_archived(limit=args.limit)
+
+        if use_json:
+            print(json.dumps(tasks, indent=2))
+        elif not tasks:
+            print("No archived tasks")
+        else:
+            print(f"Archived tasks ({len(tasks)}):")
+            for task in tasks:
+                archived_at = task.get('archived_at', '')[:10]
+                print(f"  {task['id']}: {task['title'][:40]} (archived {archived_at})")
+
+    elif args.archive_command == 'restore':
+        if dry_run:
+            print(f"Would restore {args.task_id} from archive")
+            return
+
+        task = agent.restore_from_archive(args.task_id)
+
+        if use_json:
+            print(json.dumps(task, indent=2))
+        elif task:
+            print(f"✓ Restored {_format_task_short(task)}")
+        else:
+            print(f"✗ Task '{args.task_id}' not found in archive")
+
+    else:
+        print("Usage: claudia archive <run|list|restore> ...")
+
+
+def _format_time(seconds: float) -> str:
+    """Format seconds as human-readable time."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m {secs}s"
+    elif minutes > 0:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def cmd_time(args, agent, use_json, dry_run):
+    """Time tracking commands."""
+    if args.time_command == 'start':
+        if dry_run:
+            print(f"Would start timer for {args.task_id}")
+            return
+
+        task = agent.start_timer(args.task_id)
+        if use_json:
+            print(json.dumps(task, indent=2))
+        elif task:
+            print(f"✓ Timer started for {_format_task_short(task)}")
+        else:
+            print(f"✗ Task '{args.task_id}' not found")
+
+    elif args.time_command == 'stop':
+        if dry_run:
+            print(f"Would stop timer for {args.task_id}")
+            return
+
+        task = agent.stop_timer(args.task_id)
+        if use_json:
+            print(json.dumps(task, indent=2))
+        elif task:
+            tt = task.get('time_tracking', {})
+            total = tt.get('total_seconds', 0)
+            print(f"✓ Timer stopped for {_format_task_short(task)}")
+            print(f"  Total time: {_format_time(total)}")
+        else:
+            print(f"✗ Task '{args.task_id}' not found")
+
+    elif args.time_command == 'pause':
+        if dry_run:
+            print(f"Would pause timer for {args.task_id}")
+            return
+
+        task = agent.pause_timer(args.task_id)
+        if use_json:
+            print(json.dumps(task, indent=2))
+        elif task:
+            tt = task.get('time_tracking', {})
+            total = tt.get('total_seconds', 0)
+            print(f"✓ Timer paused for {_format_task_short(task)}")
+            print(f"  Accumulated time: {_format_time(total)}")
+        else:
+            print(f"✗ Task '{args.task_id}' not found")
+
+    elif args.time_command == 'status':
+        info = agent.get_task_time(args.task_id)
+
+        if use_json:
+            print(json.dumps(info, indent=2))
+        elif info:
+            total = info.get('total_seconds', 0)
+            current = info.get('current_elapsed', 0)
+            is_running = info.get('is_running', False)
+            is_paused = info.get('is_paused', False)
+
+            if is_running:
+                print(f"Timer for {args.task_id}: RUNNING")
+                print(f"  Current session: {_format_time(current)}")
+                print(f"  Total (saved): {_format_time(total)}")
+            elif is_paused:
+                print(f"Timer for {args.task_id}: PAUSED")
+                print(f"  Total time: {_format_time(total)}")
+            elif total > 0:
+                print(f"Timer for {args.task_id}: STOPPED")
+                print(f"  Total time: {_format_time(total)}")
+            else:
+                print(f"Timer for {args.task_id}: Not started")
+        else:
+            print(f"✗ Task '{args.task_id}' not found")
+
+    elif args.time_command == 'report':
+        report = agent.get_time_report(
+            by=args.by,
+            labels=args.labels,
+        )
+
+        if use_json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"Time Report (by {args.by})")
+            print("=" * 50)
+
+            if not report.get('items'):
+                print("No time tracked yet.")
+            else:
+                for item in report['items']:
+                    if args.by == 'task':
+                        print(f"  {item['id']}: {item['title'][:30]}")
+                        print(f"    {_format_time(item['seconds'])} ({item['hours']}h)")
+                    elif args.by == 'label':
+                        print(f"  [{item['label']}] {_format_time(item['seconds'])} ({item['hours']}h)")
+                    elif args.by == 'day':
+                        print(f"  {item['day']}: {_format_time(item['seconds'])} ({item['hours']}h)")
+
+            print("-" * 50)
+            print(f"Total: {_format_time(report['total_seconds'])} ({report['total_hours']}h)")
+
+    else:
+        print("Usage: claudia time <start|stop|pause|status|report> ...")
+
+
+def cmd_template(args, agent, use_json, dry_run):
+    """Manage task templates."""
+    if args.template_command == 'list':
+        templates = agent.list_templates()
+
+        if use_json:
+            print(json.dumps(templates, indent=2))
+        else:
+            if not templates:
+                print("No templates found. Create one with 'claudia template create <name>'")
+            else:
+                print(f"Templates ({len(templates)}):")
+                for t in templates:
+                    subtask_count = len(t.get('subtasks', []))
+                    subtask_str = f" ({subtask_count} subtasks)" if subtask_count else ""
+                    labels = t.get('default_labels', [])
+                    label_str = f" [{', '.join(labels)}]" if labels else ""
+                    print(f"  {t['id']}: {t['name']}{subtask_str}{label_str}")
+
+    elif args.template_command == 'create':
+        if dry_run:
+            print(f"Would create template:")
+            print(f"  Name: {args.name}")
+            print(f"  Priority: P{args.priority}")
+            if args.labels:
+                print(f"  Labels: {', '.join(args.labels)}")
+            if args.subtasks:
+                print(f"  Subtasks: {len(args.subtasks)}")
+                for st in args.subtasks:
+                    print(f"    - {st}")
+            return
+
+        # Convert subtask strings to dicts
+        subtask_dicts = [{'title': st} for st in (args.subtasks or [])]
+
+        template = agent.create_template(
+            name=args.name,
+            description=args.description,
+            default_priority=args.priority,
+            default_labels=args.labels,
+            subtasks=subtask_dicts,
+        )
+
+        if use_json:
+            print(json.dumps(template, indent=2))
+        else:
+            subtask_count = len(template.get('subtasks', []))
+            print(f"✓ Created template {template['id']}: {template['name']}")
+            if subtask_count:
+                print(f"  With {subtask_count} subtask(s)")
+
+    elif args.template_command == 'delete':
+        if dry_run:
+            template = agent.get_template(args.template_id)
+            if template:
+                print(f"Would delete template: {template['id']}: {template['name']}")
+            else:
+                print(f"Template '{args.template_id}' not found")
+            return
+
+        success = agent.delete_template(args.template_id)
+
+        if use_json:
+            print(json.dumps({'success': success}, indent=2))
+        elif success:
+            print(f"✓ Deleted template {args.template_id}")
+        else:
+            print(f"✗ Template '{args.template_id}' not found")
+
+    elif args.template_command == 'show':
+        template = agent.get_template(args.template_id)
+
+        if use_json:
+            print(json.dumps(template, indent=2))
+        elif template:
+            print(f"Template: {template['id']}")
+            print(f"Name:     {template['name']}")
+            print(f"Priority: P{template.get('default_priority', 2)}")
+            labels = template.get('default_labels', [])
+            if labels:
+                print(f"Labels:   {', '.join(labels)}")
+            if template.get('description'):
+                print(f"\nDescription:")
+                print(f"  {template['description']}")
+            subtasks = template.get('subtasks', [])
+            if subtasks:
+                print(f"\nSubtasks ({len(subtasks)}):")
+                for st in subtasks:
+                    print(f"  • {st.get('title')}")
+        else:
+            print(f"✗ Template '{args.template_id}' not found")
+
+    else:
+        print("Usage: claudia template <list|create|delete|show> ...")
+
+
+def cmd_subtask(args, agent, use_json, dry_run):
+    """Manage subtasks."""
+    if args.subtask_command == 'create':
+        if dry_run:
+            print(f"Would create subtask under {args.parent_id}:")
+            print(f"  Title: {args.title}")
+            if args.description:
+                print(f"  Description: {args.description[:50]}...")
+            if args.priority is not None:
+                print(f"  Priority: P{args.priority}")
+            if args.labels:
+                print(f"  Labels: {', '.join(args.labels)}")
+            return
+
+        subtask = agent.create_subtask(
+            parent_id=args.parent_id,
+            title=args.title,
+            description=args.description,
+            priority=args.priority,
+            labels=args.labels,
+        )
+
+        if subtask:
+            if use_json:
+                print(json.dumps(subtask, indent=2))
+            else:
+                print(f"✓ Created subtask {_format_task_short(subtask)}")
+                print(f"  Parent: {args.parent_id}")
+        else:
+            print(f"✗ Parent task '{args.parent_id}' not found")
+
+    elif args.subtask_command == 'list':
+        subtasks = agent.get_subtasks(args.task_id)
+
+        if use_json:
+            print(json.dumps(subtasks, indent=2))
+        else:
+            if not subtasks:
+                print(f"No subtasks for {args.task_id}")
+            else:
+                print(f"Subtasks of {args.task_id}:")
+                for st in subtasks:
+                    status = st.get('status', 'open')
+                    status_display = _color_status(status) if Colors.is_enabled() else status
+                    print(f"  {_format_task_short(st)} [{status_display}]")
+                print(f"\n{len(subtasks)} subtask(s)")
+
+    elif args.subtask_command == 'progress':
+        progress = agent.get_subtask_progress(args.task_id)
+
+        if progress is None:
+            print(f"✗ Task '{args.task_id}' not found")
+            return
+
+        if use_json:
+            print(json.dumps(progress, indent=2))
+        else:
+            total = progress.get('total', 0)
+            if total == 0:
+                print(f"Task {args.task_id} has no subtasks")
+            else:
+                pct = progress.get('percentage', 0)
+                completed = progress.get('completed', 0)
+                in_progress = progress.get('in_progress', 0)
+                open_count = progress.get('open', 0)
+                blocked = progress.get('blocked', 0)
+
+                print(f"Subtask progress for {args.task_id}: {pct}%")
+                print(f"  {completed}/{total} completed")
+                if in_progress:
+                    print(f"  {in_progress} in progress")
+                if open_count:
+                    print(f"  {open_count} open")
+                if blocked:
+                    print(f"  {blocked} blocked")
+
+    else:
+        print("Usage: claudia subtask <create|list|progress> ...")
 
 
 def cmd_session(args, agent, use_json):
@@ -836,24 +1556,110 @@ Examples:
 
     # create
     create_p = subparsers.add_parser('create', help='Create a task')
-    create_p.add_argument('title')
+    create_p.add_argument('title', nargs='?', default=None, help='Task title (optional with -i)')
     create_p.add_argument('--description', '-d', default='')
     create_p.add_argument('--priority', '-p', type=int, default=2)
     create_p.add_argument('--labels', '-l', nargs='*', default=[])
+    create_p.add_argument('--template', '-T', help='Create from template ID')
+    create_p.add_argument('--interactive', '-i', action='store_true', help='Interactive wizard mode')
 
     # next
     next_p = subparsers.add_parser('next', help='Claim next task')
     next_p.add_argument('--labels', '-l', nargs='*', default=[])
 
     # complete
-    complete_p = subparsers.add_parser('complete', help='Complete a task')
-    complete_p.add_argument('task_id')
+    complete_p = subparsers.add_parser('complete', help='Complete one or more tasks')
+    complete_p.add_argument('task_ids', nargs='+', metavar='task_id', help='Task ID(s) to complete')
     complete_p.add_argument('--note', '-n', default='')
+    complete_p.add_argument('--force', '-f', action='store_true', help='Complete even if subtasks are incomplete')
+
+    # edit
+    edit_p = subparsers.add_parser('edit', help='Edit a task')
+    edit_p.add_argument('task_id')
+    edit_p.add_argument('--title', '-t', help='New title')
+    edit_p.add_argument('--description', '-d', help='New description')
+    edit_p.add_argument('--priority', '-p', type=int, choices=[0, 1, 2, 3], help='New priority')
+    edit_p.add_argument('--labels', '-l', nargs='*', help='New labels (replaces existing)')
+
+    # delete
+    delete_p = subparsers.add_parser('delete', help='Delete a task')
+    delete_p.add_argument('task_id')
+    delete_p.add_argument('--force', '-f', action='store_true', help='Delete even if task has subtasks')
 
     # reopen
-    reopen_p = subparsers.add_parser('reopen', help='Reopen a task')
-    reopen_p.add_argument('task_id')
+    reopen_p = subparsers.add_parser('reopen', help='Reopen one or more tasks')
+    reopen_p.add_argument('task_ids', nargs='+', metavar='task_id', help='Task ID(s) to reopen')
     reopen_p.add_argument('--note', '-n', default='')
+
+    # archive
+    archive_p = subparsers.add_parser('archive', help='Archive old completed tasks')
+    archive_sub = archive_p.add_subparsers(dest='archive_command')
+
+    archive_run = archive_sub.add_parser('run', help='Archive tasks older than N days')
+    archive_run.add_argument('--days', '-d', type=int, default=30, help='Days old threshold')
+
+    archive_list = archive_sub.add_parser('list', help='List archived tasks')
+    archive_list.add_argument('--limit', '-n', type=int, default=20)
+
+    archive_restore = archive_sub.add_parser('restore', help='Restore a task from archive')
+    archive_restore.add_argument('task_id')
+
+    # time
+    time_p = subparsers.add_parser('time', help='Time tracking')
+    time_sub = time_p.add_subparsers(dest='time_command')
+
+    time_start = time_sub.add_parser('start', help='Start timer for a task')
+    time_start.add_argument('task_id')
+
+    time_stop = time_sub.add_parser('stop', help='Stop timer for a task')
+    time_stop.add_argument('task_id')
+
+    time_pause = time_sub.add_parser('pause', help='Pause timer for a task')
+    time_pause.add_argument('task_id')
+
+    time_status = time_sub.add_parser('status', help='Show timer status for a task')
+    time_status.add_argument('task_id')
+
+    time_report = time_sub.add_parser('report', help='Show time report')
+    time_report.add_argument('--by', choices=['task', 'label', 'day'], default='task')
+    time_report.add_argument('--labels', '-l', nargs='*', help='Filter by labels')
+
+    # template
+    template_p = subparsers.add_parser('template', help='Manage task templates')
+    template_sub = template_p.add_subparsers(dest='template_command')
+
+    template_list = template_sub.add_parser('list', help='List templates')
+
+    template_create = template_sub.add_parser('create', help='Create a template')
+    template_create.add_argument('name', help='Template name')
+    template_create.add_argument('--description', '-d', default='')
+    template_create.add_argument('--priority', '-p', type=int, default=2)
+    template_create.add_argument('--labels', '-l', nargs='*', default=[])
+    template_create.add_argument('--subtask', '-s', action='append', dest='subtasks',
+                                  help='Add subtask (can be repeated)')
+
+    template_delete = template_sub.add_parser('delete', help='Delete a template')
+    template_delete.add_argument('template_id')
+
+    template_show = template_sub.add_parser('show', help='Show template details')
+    template_show.add_argument('template_id')
+
+    # subtask
+    subtask_p = subparsers.add_parser('subtask', help='Manage subtasks')
+    subtask_sub = subtask_p.add_subparsers(dest='subtask_command')
+
+    subtask_create = subtask_sub.add_parser('create', help='Create a subtask')
+    subtask_create.add_argument('parent_id', help='Parent task ID')
+    subtask_create.add_argument('title', help='Subtask title')
+    subtask_create.add_argument('--description', '-d', default='')
+    subtask_create.add_argument('--priority', '-p', type=int, help='Override parent priority')
+    subtask_create.add_argument('--labels', '-l', nargs='*', help='Override parent labels')
+
+    subtask_list = subtask_sub.add_parser('list', help='List subtasks of a task')
+    subtask_list.add_argument('task_id', help='Parent task ID')
+
+    subtask_progress = subtask_sub.add_parser('progress', help='Show subtask progress')
+    subtask_progress.add_argument('task_id', help='Parent task ID')
 
     # start-parallel
     parallel_p = subparsers.add_parser('start-parallel', help='Start parallel mode')
@@ -884,10 +1690,16 @@ Examples:
     docs_generate.add_argument('--type', '-t', default='architecture',
                                choices=['architecture', 'onboarding', 'api', 'readme'],
                                help='Documentation type')
+    docs_generate.add_argument('--level', '-L', default='mid',
+                               choices=['junior', 'mid', 'senior'],
+                               help='Detail level (junior=verbose, mid=balanced, senior=minimal)')
     docs_generate.add_argument('--output', '-o', help='Output file path')
     docs_generate.add_argument('path', nargs='?', help='Project path')
 
     docs_all = docs_sub.add_parser('all', help='Generate all documentation')
+    docs_all.add_argument('--level', '-L', default='mid',
+                          choices=['junior', 'mid', 'senior'],
+                          help='Detail level (junior=verbose, mid=balanced, senior=minimal)')
     docs_all.add_argument('path', nargs='?', help='Project path')
     docs_all.add_argument('--output', '-o', help='Output directory')
 
@@ -936,8 +1748,20 @@ Examples:
             cmd_next(args, agent, use_json, dry_run)
         elif args.command == 'complete':
             cmd_complete(args, agent, use_json, dry_run)
+        elif args.command == 'edit':
+            cmd_edit(args, agent, use_json, dry_run)
+        elif args.command == 'delete':
+            cmd_delete(args, agent, use_json, dry_run)
         elif args.command == 'reopen':
             cmd_reopen(args, agent, use_json, dry_run)
+        elif args.command == 'archive':
+            cmd_archive(args, agent, use_json, dry_run)
+        elif args.command == 'time':
+            cmd_time(args, agent, use_json, dry_run)
+        elif args.command == 'template':
+            cmd_template(args, agent, use_json, dry_run)
+        elif args.command == 'subtask':
+            cmd_subtask(args, agent, use_json, dry_run)
         elif args.command == 'session':
             cmd_session(args, agent, use_json)
         elif args.command == 'start-parallel':

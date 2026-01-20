@@ -70,6 +70,11 @@ class Task:
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat() + 'Z')
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat() + 'Z')
     notes: list[dict] = field(default_factory=list)
+    # v2 fields for subtasks and time tracking
+    parent_id: Optional[str] = None  # ID of parent task (for subtasks)
+    subtasks: list[str] = field(default_factory=list)  # List of subtask IDs
+    is_subtask: bool = False  # Quick filter flag
+    time_tracking: Optional[dict] = None  # Timer data: {started_at, paused_at, total_seconds}
 
     def to_dict(self) -> dict:
         # Truncate notes to prevent unbounded growth (keep most recent)
@@ -87,6 +92,11 @@ class Task:
             'created_at': self.created_at,
             'updated_at': self.updated_at,
             'notes': truncated_notes,
+            # v2 fields
+            'parent_id': self.parent_id,
+            'subtasks': self.subtasks,
+            'is_subtask': self.is_subtask,
+            'time_tracking': self.time_tracking,
         }
 
     @classmethod
@@ -110,6 +120,11 @@ class Task:
             created_at=data.get('created_at', datetime.now(timezone.utc).isoformat() + 'Z'),
             updated_at=data.get('updated_at', datetime.now(timezone.utc).isoformat() + 'Z'),
             notes=data.get('notes', []),
+            # v2 fields with defaults for backward compatibility
+            parent_id=data.get('parent_id'),
+            subtasks=data.get('subtasks', []),
+            is_subtask=data.get('is_subtask', False),
+            time_tracking=data.get('time_tracking'),
         )
 
 
@@ -394,12 +409,59 @@ class Coordinator:
         logger.info(f"Task {task_id} created: {title}")
         return task
 
+    def _calculate_session_affinity(self, session_id: str, task: 'Task') -> float:
+        """
+        Calculate affinity score between a session and a task.
+
+        Higher scores = better fit. Considers:
+        - Label overlap with session's preferred labels
+        - Historical completions with matching labels
+        """
+        affinity = 0.0
+
+        session = self.state.sessions.get(session_id)
+        if not session:
+            return affinity
+
+        # Bonus for label match with session preferences
+        if session.preferred_labels and task.labels:
+            matching = set(task.labels) & set(session.preferred_labels)
+            affinity += len(matching) * 2.0
+
+        # Bonus for completing similar tasks before (from history)
+        # Check session's completed tasks for label overlap
+        for other_task in self.state.tasks.values():
+            if other_task.status == TaskStatus.DONE:
+                # Check if this session completed it (via notes)
+                for note in other_task.notes:
+                    if note.get('session_id') == session_id and 'Completed' in note.get('note', ''):
+                        # Label match with completed task
+                        if task.labels and other_task.labels:
+                            overlap = set(task.labels) & set(other_task.labels)
+                            affinity += len(overlap) * 0.5
+                        break
+
+        return affinity
+
+    def _get_session_load(self, session_id: str) -> int:
+        """Get number of tasks currently assigned to a session."""
+        session = self.state.sessions.get(session_id)
+        if session:
+            return len(session.working_on)
+        return 0
+
     async def request_task(
         self,
         session_id: str,
         preferred_labels: list[str] = None,
     ) -> Optional[Task]:
-        """Atomically assign the best available task to a session."""
+        """
+        Atomically assign the best available task to a session.
+
+        Uses smart assignment with:
+        - Affinity scoring (label match, historical completions)
+        - Load balancing (prefer less busy sessions)
+        """
         async with self.state._lock:
             ready_tasks = []
             for task in self.state.tasks.values():
@@ -422,13 +484,27 @@ class Coordinator:
             if not ready_tasks:
                 return None
 
+            # Get session load for load balancing
+            session_load = self._get_session_load(session_id)
+
             def score_task(task: Task) -> tuple:
+                # Priority is most important (lower = higher priority)
                 priority_score = task.priority
+
+                # Affinity scoring (negative = better, for sorting)
+                affinity = self._calculate_session_affinity(session_id, task)
+                affinity_score = -affinity
+
+                # Preferred labels bonus
                 label_score = 0
                 if preferred_labels:
                     matching = set(task.labels) & set(preferred_labels)
-                    label_score = -len(matching)
-                return (priority_score, label_score, task.created_at)
+                    label_score = -len(matching) * 3  # Strong preference
+
+                # Load balancing: if session is busy, prefer simpler tasks
+                load_penalty = session_load * 0.5 if task.subtasks else 0
+
+                return (priority_score, label_score, affinity_score, load_penalty, task.created_at)
 
             ready_tasks.sort(key=score_task)
             best_task = ready_tasks[0]
@@ -461,12 +537,41 @@ class Coordinator:
         session_id: str,
         completion_note: str = "",
         branch: Optional[str] = None,
-    ) -> Optional[Task]:
+        force: bool = False,
+    ) -> dict:
+        """
+        Complete a task, checking for incomplete subtasks.
+
+        Returns:
+            Dict with 'success', optionally 'task', 'error', 'incomplete_subtasks'
+        """
         async with self.state._lock:
             if task_id not in self.state.tasks:
-                return None
+                return {'success': False, 'error': 'Task not found'}
 
             task = self.state.tasks[task_id]
+
+            # Check for incomplete subtasks
+            if task.subtasks and not force:
+                incomplete = []
+                for sid in task.subtasks:
+                    subtask = self.state.tasks.get(sid)
+                    if subtask and subtask.status != TaskStatus.DONE:
+                        status_val = subtask.status.value if isinstance(subtask.status, TaskStatus) else subtask.status
+                        incomplete.append({
+                            'id': sid,
+                            'title': subtask.title,
+                            'status': status_val,
+                        })
+
+                if incomplete:
+                    return {
+                        'success': False,
+                        'error': 'incomplete_subtasks',
+                        'incomplete_subtasks': incomplete,
+                        'message': f'{len(incomplete)} subtask(s) not complete',
+                    }
+
             task.status = TaskStatus.DONE
             task.assignee = None
             task.updated_at = datetime.now(timezone.utc).isoformat() + 'Z'
@@ -493,7 +598,7 @@ class Coordinator:
         })
         await self.state.save()
         logger.info(f"Task {task_id} completed by {session_id}")
-        return task
+        return {'success': True, 'task': task.to_dict()}
 
     async def add_note(self, task_id: str, session_id: str, note: str) -> bool:
         async with self.state._lock:
@@ -509,6 +614,401 @@ class Coordinator:
 
         await self.state.save()
         return True
+
+    async def reopen_task(
+        self,
+        task_id: str,
+        session_id: str,
+        note: str = "",
+    ) -> Optional[Task]:
+        """Reopen a completed or blocked task."""
+        async with self.state._lock:
+            if task_id not in self.state.tasks:
+                return None
+
+            task = self.state.tasks[task_id]
+            old_status = task.status.value if isinstance(task.status, TaskStatus) else task.status
+            task.status = TaskStatus.OPEN
+            task.assignee = None
+            task.updated_at = datetime.now(timezone.utc).isoformat() + 'Z'
+
+            note_text = f'Reopened (was {old_status})'
+            if note:
+                note_text += f': {note}'
+            task.notes.append({
+                'timestamp': datetime.now(timezone.utc).isoformat() + 'Z',
+                'session_id': session_id,
+                'note': note_text,
+            })
+
+        await self.state.broadcast({
+            'event': 'task_reopened',
+            'task_id': task_id,
+            'session_id': session_id,
+        })
+        await self.state.save()
+        logger.info(f"Task {task_id} reopened by {session_id}")
+        return task
+
+    async def bulk_complete_tasks(
+        self,
+        task_ids: list[str],
+        session_id: str,
+        completion_note: str = "",
+        branch: Optional[str] = None,
+        force: bool = False,
+    ) -> dict:
+        """
+        Complete multiple tasks at once.
+
+        Returns:
+            Dict with 'succeeded' list, 'failed' list (with reasons), and 'total' counts
+        """
+        succeeded = []
+        failed = []
+
+        async with self.state._lock:
+            for task_id in task_ids:
+                if task_id not in self.state.tasks:
+                    failed.append({'id': task_id, 'error': 'Task not found'})
+                    continue
+
+                task = self.state.tasks[task_id]
+
+                # Check for incomplete subtasks
+                if task.subtasks and not force:
+                    incomplete = []
+                    for sid in task.subtasks:
+                        subtask = self.state.tasks.get(sid)
+                        if subtask and subtask.status != TaskStatus.DONE:
+                            status_val = subtask.status.value if isinstance(subtask.status, TaskStatus) else subtask.status
+                            incomplete.append({
+                                'id': sid,
+                                'title': subtask.title,
+                                'status': status_val,
+                            })
+
+                    if incomplete:
+                        failed.append({
+                            'id': task_id,
+                            'error': 'incomplete_subtasks',
+                            'incomplete_subtasks': incomplete,
+                        })
+                        continue
+
+                task.status = TaskStatus.DONE
+                task.assignee = None
+                task.updated_at = datetime.now(timezone.utc).isoformat() + 'Z'
+                if branch:
+                    task.branch = branch
+
+                if completion_note:
+                    task.notes.append({
+                        'timestamp': datetime.now(timezone.utc).isoformat() + 'Z',
+                        'session_id': session_id,
+                        'note': f'Completed: {completion_note}',
+                    })
+                else:
+                    task.notes.append({
+                        'timestamp': datetime.now(timezone.utc).isoformat() + 'Z',
+                        'session_id': session_id,
+                        'note': 'Completed (bulk)',
+                    })
+
+                if session_id in self.state.sessions:
+                    session = self.state.sessions[session_id]
+                    if task_id in session.working_on:
+                        session.working_on.remove(task_id)
+
+                succeeded.append(task_id)
+
+        if succeeded:
+            await self.state.broadcast({
+                'event': 'tasks_bulk_completed',
+                'task_ids': succeeded,
+                'session_id': session_id,
+                'count': len(succeeded),
+            })
+            await self.state.save()
+            logger.info(f"{len(succeeded)} task(s) bulk completed by {session_id}")
+
+        return {
+            'succeeded': succeeded,
+            'failed': failed,
+            'total_succeeded': len(succeeded),
+            'total_failed': len(failed),
+        }
+
+    async def bulk_reopen_tasks(
+        self,
+        task_ids: list[str],
+        session_id: str,
+        note: str = "",
+    ) -> dict:
+        """
+        Reopen multiple tasks at once.
+
+        Returns:
+            Dict with 'succeeded' list, 'failed' list (with reasons), and 'total' counts
+        """
+        succeeded = []
+        failed = []
+
+        async with self.state._lock:
+            for task_id in task_ids:
+                if task_id not in self.state.tasks:
+                    failed.append({'id': task_id, 'error': 'Task not found'})
+                    continue
+
+                task = self.state.tasks[task_id]
+                old_status = task.status.value if isinstance(task.status, TaskStatus) else task.status
+
+                if old_status == 'open':
+                    failed.append({'id': task_id, 'error': 'Task is already open'})
+                    continue
+
+                task.status = TaskStatus.OPEN
+                task.assignee = None
+                task.updated_at = datetime.now(timezone.utc).isoformat() + 'Z'
+
+                note_text = f'Reopened (was {old_status})'
+                if note:
+                    note_text += f': {note}'
+                task.notes.append({
+                    'timestamp': datetime.now(timezone.utc).isoformat() + 'Z',
+                    'session_id': session_id,
+                    'note': note_text,
+                })
+
+                succeeded.append(task_id)
+
+        if succeeded:
+            await self.state.broadcast({
+                'event': 'tasks_bulk_reopened',
+                'task_ids': succeeded,
+                'session_id': session_id,
+                'count': len(succeeded),
+            })
+            await self.state.save()
+            logger.info(f"{len(succeeded)} task(s) bulk reopened by {session_id}")
+
+        return {
+            'succeeded': succeeded,
+            'failed': failed,
+            'total_succeeded': len(succeeded),
+            'total_failed': len(failed),
+        }
+
+    async def create_subtask(
+        self,
+        parent_id: str,
+        title: str,
+        description: str = "",
+        priority: int = None,
+        labels: list[str] = None,
+        session_id: Optional[str] = None,
+    ) -> Optional[Task]:
+        """Create a subtask under a parent task."""
+        async with self.state._lock:
+            if parent_id not in self.state.tasks:
+                return None
+
+            parent = self.state.tasks[parent_id]
+
+            task_id = f"task-{self.state.next_id:03d}"
+            self.state.next_id += 1
+
+            # Inherit priority and labels from parent if not specified
+            subtask = Task(
+                id=task_id,
+                title=title,
+                description=description,
+                priority=priority if priority is not None else parent.priority,
+                labels=labels if labels is not None else parent.labels.copy(),
+                branch=parent.branch,
+                parent_id=parent_id,
+                is_subtask=True,
+            )
+
+            if session_id:
+                subtask.notes.append({
+                    'timestamp': datetime.now(timezone.utc).isoformat() + 'Z',
+                    'session_id': session_id,
+                    'note': f'Created as subtask of {parent_id}',
+                })
+
+            # Add to parent's subtask list
+            parent.subtasks.append(task_id)
+            parent.updated_at = datetime.now(timezone.utc).isoformat() + 'Z'
+
+            self.state.tasks[task_id] = subtask
+
+        await self.state.broadcast({
+            'event': 'subtask_created',
+            'task_id': task_id,
+            'parent_id': parent_id,
+            'title': title,
+        })
+        await self.state.save()
+        logger.info(f"Subtask {task_id} created under {parent_id}: {title}")
+        return subtask
+
+    async def get_subtask_progress(self, task_id: str) -> Optional[dict]:
+        """Get progress of a task's subtasks."""
+        async with self.state._lock:
+            if task_id not in self.state.tasks:
+                return None
+
+            task = self.state.tasks[task_id]
+            subtask_ids = task.subtasks
+
+            if not subtask_ids:
+                return {
+                    'total': 0,
+                    'completed': 0,
+                    'in_progress': 0,
+                    'open': 0,
+                    'blocked': 0,
+                    'percentage': 100,
+                }
+
+            counts = {'open': 0, 'in_progress': 0, 'done': 0, 'blocked': 0}
+            for sid in subtask_ids:
+                subtask = self.state.tasks.get(sid)
+                if subtask:
+                    status = subtask.status.value if isinstance(subtask.status, TaskStatus) else subtask.status
+                    counts[status] = counts.get(status, 0) + 1
+
+            total = len(subtask_ids)
+            completed = counts.get('done', 0)
+
+            return {
+                'total': total,
+                'completed': completed,
+                'in_progress': counts.get('in_progress', 0),
+                'open': counts.get('open', 0),
+                'blocked': counts.get('blocked', 0),
+                'percentage': round((completed / total) * 100) if total > 0 else 100,
+            }
+
+    async def get_subtasks(self, task_id: str) -> list[dict]:
+        """Get all subtasks for a task."""
+        async with self.state._lock:
+            if task_id not in self.state.tasks:
+                return []
+
+            task = self.state.tasks[task_id]
+            subtasks = []
+            for sid in task.subtasks:
+                subtask = self.state.tasks.get(sid)
+                if subtask:
+                    subtasks.append(subtask.to_dict())
+
+            return subtasks
+
+    async def edit_task(
+        self,
+        task_id: str,
+        session_id: str,
+        title: str = None,
+        description: str = None,
+        priority: int = None,
+        labels: list[str] = None,
+    ) -> Optional[Task]:
+        """Edit a task's properties."""
+        async with self.state._lock:
+            if task_id not in self.state.tasks:
+                return None
+
+            task = self.state.tasks[task_id]
+            changes = []
+
+            if title is not None and title != task.title:
+                task.title = title
+                changes.append("title")
+
+            if description is not None and description != task.description:
+                task.description = description
+                changes.append("description")
+
+            if priority is not None and priority != task.priority:
+                task.priority = priority
+                changes.append(f"priority to P{priority}")
+
+            if labels is not None and labels != task.labels:
+                task.labels = labels
+                changes.append("labels")
+
+            if changes:
+                task.updated_at = datetime.now(timezone.utc).isoformat() + 'Z'
+                task.notes.append({
+                    'timestamp': datetime.now(timezone.utc).isoformat() + 'Z',
+                    'session_id': session_id,
+                    'note': f'Edited: {", ".join(changes)}',
+                })
+
+        if changes:
+            await self.state.broadcast({
+                'event': 'task_edited',
+                'task_id': task_id,
+                'session_id': session_id,
+                'changes': changes,
+            })
+            await self.state.save()
+            logger.info(f"Task {task_id} edited by {session_id}: {', '.join(changes)}")
+
+        return task
+
+    async def delete_task(
+        self,
+        task_id: str,
+        session_id: str,
+        force: bool = False,
+    ) -> dict:
+        """Delete a task."""
+        async with self.state._lock:
+            if task_id not in self.state.tasks:
+                return {'success': False, 'error': 'Task not found'}
+
+            task = self.state.tasks[task_id]
+
+            # Check for subtasks
+            if task.subtasks and not force:
+                return {
+                    'success': False,
+                    'error': 'has_subtasks',
+                    'subtasks': task.subtasks,
+                    'message': f'Task has {len(task.subtasks)} subtask(s). Use --force to delete.',
+                }
+
+            deleted_subtasks = []
+
+            # Remove from parent's subtask list if this is a subtask
+            if task.parent_id and task.parent_id in self.state.tasks:
+                parent = self.state.tasks[task.parent_id]
+                if task_id in parent.subtasks:
+                    parent.subtasks.remove(task_id)
+                    parent.updated_at = datetime.now(timezone.utc).isoformat() + 'Z'
+
+            # Delete subtasks if force
+            if task.subtasks and force:
+                for sid in task.subtasks:
+                    if sid in self.state.tasks:
+                        del self.state.tasks[sid]
+                        deleted_subtasks.append(sid)
+
+            # Delete the task
+            del self.state.tasks[task_id]
+
+        await self.state.broadcast({
+            'event': 'task_deleted',
+            'task_id': task_id,
+            'session_id': session_id,
+        })
+        await self.state.save()
+        logger.info(f"Task {task_id} deleted by {session_id}")
+
+        return {'success': True, 'deleted_subtasks': deleted_subtasks}
 
     async def get_status(self) -> dict:
         async with self.state._lock:
@@ -769,15 +1269,15 @@ async def route_request(coordinator: Coordinator, method: str, path: str, data: 
         if method == 'POST' and path == '/task/complete':
             if 'task_id' not in data or 'session_id' not in data:
                 return {'error': 'Missing required fields: task_id, session_id'}, 422
-            task = await coordinator.complete_task(
+            result = await coordinator.complete_task(
                 task_id=data['task_id'],
                 session_id=data['session_id'],
                 completion_note=data.get('note', ''),
                 branch=data.get('branch'),
+                force=data.get('force', False),
             )
-            if task:
-                return {'success': True, 'task': task.to_dict()}, 200
-            return {'success': False, 'error': 'Task not found'}, 404
+            # Result is now a dict with success/error/incomplete_subtasks
+            return result, 200 if result.get('success') else 400
 
         if method == 'POST' and path == '/task/note':
             if 'task_id' not in data or 'session_id' not in data or 'note' not in data:
@@ -790,6 +1290,97 @@ async def route_request(coordinator: Coordinator, method: str, path: str, data: 
             if success:
                 return {'success': True}, 200
             return {'success': False, 'error': 'Task not found'}, 404
+
+        if method == 'POST' and path == '/task/reopen':
+            if 'task_id' not in data or 'session_id' not in data:
+                return {'error': 'Missing required fields: task_id, session_id'}, 422
+            task = await coordinator.reopen_task(
+                task_id=data['task_id'],
+                session_id=data['session_id'],
+                note=data.get('note', ''),
+            )
+            if task:
+                return {'success': True, 'task': task.to_dict()}, 200
+            return {'success': False, 'error': 'Task not found'}, 404
+
+        # Bulk operations
+        if method == 'POST' and path == '/task/bulk-complete':
+            if 'task_ids' not in data or 'session_id' not in data:
+                return {'error': 'Missing required fields: task_ids, session_id'}, 422
+            result = await coordinator.bulk_complete_tasks(
+                task_ids=data['task_ids'],
+                session_id=data['session_id'],
+                completion_note=data.get('note', ''),
+                branch=data.get('branch'),
+                force=data.get('force', False),
+            )
+            return result, 200
+
+        if method == 'POST' and path == '/task/bulk-reopen':
+            if 'task_ids' not in data or 'session_id' not in data:
+                return {'error': 'Missing required fields: task_ids, session_id'}, 422
+            result = await coordinator.bulk_reopen_tasks(
+                task_ids=data['task_ids'],
+                session_id=data['session_id'],
+                note=data.get('note', ''),
+            )
+            return result, 200
+
+        # Edit and delete routes
+        if method == 'POST' and path == '/task/edit':
+            if 'task_id' not in data or 'session_id' not in data:
+                return {'error': 'Missing required fields: task_id, session_id'}, 422
+            task = await coordinator.edit_task(
+                task_id=data['task_id'],
+                session_id=data['session_id'],
+                title=data.get('title'),
+                description=data.get('description'),
+                priority=data.get('priority'),
+                labels=data.get('labels'),
+            )
+            if task:
+                return {'task': task.to_dict()}, 200
+            return {'error': 'Task not found'}, 404
+
+        if method == 'POST' and path == '/task/delete':
+            if 'task_id' not in data or 'session_id' not in data:
+                return {'error': 'Missing required fields: task_id, session_id'}, 422
+            result = await coordinator.delete_task(
+                task_id=data['task_id'],
+                session_id=data['session_id'],
+                force=data.get('force', False),
+            )
+            return result, 200 if result.get('success') else 400
+
+        # Subtask routes
+        if method == 'POST' and path == '/task/create-subtask':
+            if 'parent_id' not in data or 'title' not in data:
+                return {'error': 'Missing required fields: parent_id, title'}, 422
+            task = await coordinator.create_subtask(
+                parent_id=data['parent_id'],
+                title=data['title'],
+                description=data.get('description', ''),
+                priority=data.get('priority'),
+                labels=data.get('labels'),
+                session_id=data.get('session_id'),
+            )
+            if task:
+                return {'task': task.to_dict()}, 200
+            return {'error': 'Parent task not found'}, 404
+
+        # Match /task/{task_id}/subtask-progress
+        if method == 'GET' and path.startswith('/task/') and path.endswith('/subtask-progress'):
+            task_id = path.split('/')[2]
+            progress = await coordinator.get_subtask_progress(task_id)
+            if progress is not None:
+                return progress, 200
+            return {'error': 'Task not found'}, 404
+
+        # Match /task/{task_id}/subtasks
+        if method == 'GET' and path.startswith('/task/') and path.endswith('/subtasks'):
+            task_id = path.split('/')[2]
+            subtasks = await coordinator.get_subtasks(task_id)
+            return {'subtasks': subtasks}, 200
 
         return {'error': f'Unknown route: {method} {path}'}, 404
 

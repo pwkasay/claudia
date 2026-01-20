@@ -1,136 +1,202 @@
 # Architecture Overview
 
+Claudia v2.0 - A lightweight task coordination system for Claude Code
+
 ## Project Structure
 
 ```
-  src/claudia/ (6 files, python)
+src/claudia/
+├── __init__.py      # Package exports (Agent, __version__)
+├── agent.py         # Unified client API (single/parallel modes)
+├── cli.py           # Command-line interface
+├── coordinator.py   # Async HTTP server for parallel mode
+├── dashboard.py     # Terminal UI with monitoring
+├── colors.py        # Terminal color utilities
+└── docs.py          # Documentation generation
 ```
+
+## Operating Modes
+
+### Single Mode (Default)
+- Direct JSON file access with atomic write (tmp + rename)
+- File locking (`FileLock`) for concurrent safety
+- No server required - all state in `.agent-state/tasks.json`
+
+### Parallel Mode
+- Coordinator runs as background HTTP server
+- Agent detects mode via `.agent-state/.parallel-mode` file
+- All operations route through HTTP to coordinator
+- Atomic task assignment with smart load balancing
+- Retry logic with exponential backoff (0.5s → 1s → 2s → 4s, max 8s)
 
 ## Key Modules
 
-### `agent.py`
+### `agent.py` - Unified Client API
 
-**Classes:**
-- `Agent`
+The Agent class provides a unified interface that works in both modes.
 
-**Key functions:**
-- `is_task_ready()`
-- `main()`
+**Core Features:**
+- Mode detection and automatic routing
+- Session management (register, heartbeat, end)
+- Task CRUD operations
+- Subtask hierarchy (v2.0)
+- Templates for reusable task patterns (v2.0)
+- Time tracking with start/stop/pause (v2.0)
+- Bulk operations (v1.1)
+- Undo system with action history (v1.1)
+- Archiving old completed tasks (v1.1)
 
-### `coordinator.py`
+**Key Classes:**
+- `FileLock` - Cross-platform file locking (fcntl/msvcrt)
+- `Agent` - Main client class with 40+ methods
 
-**Classes:**
-- `TaskStatus`
-- `Task`
-- `Session`
-- `CoordinatorState`
-- `Coordinator`
+### `cli.py` - Command Line Interface
 
-### `dashboard.py`
+Rich CLI with colored output and comprehensive commands.
 
-**Classes:**
-- `Colors`
+**Command Categories:**
+- Task management: create, show, edit, delete, complete, reopen
+- Subtasks: create, list, progress
+- Templates: list, create, show, delete
+- Time tracking: start, stop, pause, status, report
+- Archiving: run, list, restore
+- Parallel mode: start-parallel, stop-parallel, session, dashboard
 
-**Key functions:**
-- `clear()`
-- `time_ago()`
-- `priority_str()`
-- `load_state_direct()`
-- `render()`
+**Global Flags:**
+- `--json` - Machine-readable output
+- `--dry-run` - Preview changes
+- `--verbose` - Detailed errors
 
-### `setup.py`
+### `coordinator.py` - Parallel Mode Server
 
-**Key functions:**
-- `create_state_dir()`
-- `create_tasks_json()`
-- `create_history()`
-- `create_readme()`
-- `create_gitkeep()`
+Async HTTP server using raw sockets and asyncio.
 
-### `src/claudia/agent.py`
-Unified Agent Client for Claudia.
+**Features:**
+- Atomic task claiming with locking
+- Smart assignment based on label affinity
+- Load balancing across sessions
+- Session heartbeat monitoring
+- Real-time state broadcasting
 
-Works in two modes:
-1. SINGLE MODE (default): Direct JSON file access, no server needed
-2. PARALLEL MODE: Connects to coordinator for atomic operations
+**Key Classes:**
+- `TaskStatus` - Enum: OPEN, IN_PROGRESS, DONE, BLOCKED
+- `Task` - Task dataclass with v2 schema
+- `Session` - Session state tracking
+- `CoordinatorState` - Shared state with pub/sub
+- `Coordinator` - HTTP request handling
 
-The mode is 
+### `dashboard.py` - Terminal UI
 
-**Classes:**
-- `Agent`
+Real-time monitoring dashboard.
 
-**Key functions:**
-- `is_task_ready()`
+**Features:**
+- Task queue visualization
+- Session status with stale warnings (60s yellow, 120s red)
+- Ready/in-progress/completed task counts
+- Alternate screen buffer (preserves scrollback)
 
-### `src/claudia/cli.py`
+### `colors.py` - Terminal Colors
 
-**Key functions:**
-- `cmd_init()`
-- `cmd_uninstall()`
-- `cmd_update()`
-- `cmd_status()`
-- `cmd_tasks()`
+Automatic color detection with override support.
 
-### `src/claudia/coordinator.py`
+**Environment Variables:**
+- `FORCE_COLOR` - Force colors on (checked first)
+- `NO_COLOR` - Force colors off
 
-**Classes:**
-- `TaskStatus`
-- `Task`
-- `Session`
-- `CoordinatorState`
-- `Coordinator`
+### `docs.py` - Documentation Generator
 
-### `src/claudia/dashboard.py`
+Analyzes codebase and generates documentation.
 
-**Classes:**
-- `Colors`
+**Output Types:**
+- Architecture overview
+- Onboarding guide
+- API reference
+- README
 
-**Key functions:**
-- `clear()`
-- `time_ago()`
-- `priority_str()`
-- `load_state_direct()`
-- `render()`
+## Data Flow
 
-### `src/claudia/docs.py`
-Documentation Agent for Claudia.
+### Single Mode
+```
+CLI → Agent → FileLock → tasks.json
+                ↓
+           history.jsonl (undo data)
+```
 
-Generates human-centered documentation about codebase architecture,
-development workflows, and APIs. Designed to be concise and actionable,
-not verbose AI-speak.
+### Parallel Mode
+```
+CLI → Agent → HTTP Request → Coordinator → State
+                    ↓              ↓
+              Retry Logic    AsyncIO Lock
+                    ↓              ↓
+              Exponential      Atomic
+              Backoff         Assignment
+```
 
-Usa
+## State Directory
 
-**Classes:**
-- `FileInfo`
-- `DocsAgent`
+```
+.agent-state/
+├── tasks.json        # Main task storage (v2 schema)
+├── templates.json    # Task templates
+├── archive.jsonl     # Archived tasks
+├── history.jsonl     # Event log with undo data
+├── sessions/         # Session state files
+├── .parallel-mode    # Mode flag + port info
+├── coordinator.pid   # Process management
+└── .lock             # File lock for single mode
+```
 
-**Key functions:**
-- `cmd_docs()`
+## Task Schema (v2)
 
-## Entry Points
+```json
+{
+  "id": "task-001",
+  "title": "Task title",
+  "description": "Optional description",
+  "status": "open",
+  "priority": 2,
+  "labels": ["backend"],
+  "assignee": null,
+  "blocked_by": [],
+  "notes": [],
+  "created_at": "2024-01-15T10:00:00Z",
+  "updated_at": "2024-01-15T10:00:00Z",
+  "parent_id": null,
+  "subtasks": [],
+  "is_subtask": false,
+  "time_tracking": {
+    "total_seconds": 0,
+    "started_at": null,
+    "is_running": false,
+    "is_paused": false
+  }
+}
+```
 
-- **src/claudia/cli.py**: Entry point: cli.py
+## HTTP API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/status` | GET | System status |
+| `/tasks` | GET | List tasks |
+| `/session/register` | POST | Register session |
+| `/session/heartbeat` | POST | Keep alive |
+| `/task/create` | POST | Create task |
+| `/task/request` | POST | Claim task |
+| `/task/complete` | POST | Complete task |
+| `/task/reopen` | POST | Reopen task |
+| `/task/edit` | POST | Edit task |
+| `/task/delete` | POST | Delete task |
+| `/task/bulk-complete` | POST | Bulk complete |
+| `/subtask/create` | POST | Create subtask |
+| `/subtask/progress` | GET | Subtask progress |
 
 ## Dependencies
 
-- `argparse`
-- `asyncio`
-- `certifi`
-- `claudia`
-- `dataclasses`
-- `datetime`
-- `enum`
-- `fnmatch`
-- `json`
-- `logging`
-- `os`
-- `pathlib`
-- `re`
-- `shutil`
-- `signal`
-- `socket`
-- `ssl`
-- `subprocess`
-- `sys`
-- `time`
+- Python 3.10+ (standard library only)
+- Optional: `certifi` for SSL on macOS
+
+## Entry Points
+
+- CLI: `claudia` command (via `cli.main()`)
+- Python API: `from claudia import Agent`
