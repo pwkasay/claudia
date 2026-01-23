@@ -8,6 +8,31 @@ This project uses Claudia, a unified task coordination system that supports both
 
 ---
 
+## Core Principle: Continuous Autonomous Task Processing
+
+**Claudia sessions should automatically continue to the next task after completing one.** This is the default behavior - do not pause to ask "Would you like me to continue?" or similar questions.
+
+The workflow is:
+1. Complete current task
+2. Immediately check for next available task
+3. If task exists → claim it and start working
+4. If no tasks remain → summarize session and end
+
+**Only stop processing when:**
+- No more tasks are available
+- You encounter a blocking error that requires user intervention
+- The user explicitly tells you to stop
+- You need critical clarification that affects multiple remaining tasks
+
+**Do NOT stop to ask:**
+- "Would you like me to continue?"
+- "Should I pick up the next task?"
+- "Ready for more work?"
+
+The goal is autonomous task completion. Users can always interrupt if needed.
+
+---
+
 ## Quick Start (Every Session)
 
 ```python
@@ -21,12 +46,19 @@ status = agent.get_status()
 print(f"Mode: {agent.get_mode()}")  # 'single' or 'parallel'
 print(f"Ready tasks: {status['ready_tasks']}")
 
-# Get and work on a task
-task = agent.get_next_task()
-if task:
+# Continuous task processing loop
+while True:
+    task = agent.get_next_task()
+    if not task:
+        print("No more tasks available")
+        break
+
     print(f"Working on: {task['id']} - {task['title']}")
     # ... do the work ...
     agent.complete_task(task['id'], "Brief completion note")
+    # Loop continues to next task automatically
+
+agent.end_session()
 ```
 
 ---
@@ -65,18 +97,26 @@ from claudia import Agent
 agent = Agent()
 agent.register(context="Working on feature X")
 
-# All operations go directly to tasks.json
-task = agent.get_next_task()
-agent.add_note(task['id'], "Making progress...")
-agent.complete_task(task['id'], "Implemented feature")
+# Continuous task processing - keep going until no tasks remain
+while True:
+    task = agent.get_next_task()
+    if not task:
+        break
 
-# Create new tasks as you discover work
-agent.create_task(
-    title="Fix: edge case in validation",
-    description="Discovered while implementing...",
-    priority=1,
-    labels=["bug", "discovered"]
-)
+    agent.add_note(task['id'], "Making progress...")
+
+    # ... do the work ...
+
+    # Create new tasks as you discover work
+    agent.create_task(
+        title="Fix: edge case in validation",
+        description="Discovered while implementing...",
+        priority=1,
+        labels=["bug", "discovered"]
+    )
+
+    agent.complete_task(task['id'], "Implemented feature")
+    # Automatically continues to next task
 
 agent.end_session()
 ```
@@ -386,13 +426,16 @@ git branch -d worker/def456/task-002
 
 ### Single Session
 ```
-START → register() → get_next_task() → work → complete_task() → ... → end_session()
+START → register() → LOOP[get_next_task() → work → complete_task()] → end_session()
+                         ↑                                    │
+                         └────────────────────────────────────┘
+                         (continue until no tasks remain)
 ```
 
 ### Parallel Mode (Main)
 ```
 START → register(role="main") → analyze_work() → start_parallel_mode()
-      → tell_user_to_open_workers → work_on_own_tasks
+      → tell_user_to_open_workers → LOOP[work_on_own_tasks]
       → wait_for_workers → get_parallel_summary() → merge_branches
       → stop_parallel_mode() → end_session()
 ```
@@ -400,9 +443,12 @@ START → register(role="main") → analyze_work() → start_parallel_mode()
 ### Parallel Mode (Worker)
 ```
 START → detect_parallel_mode → register(role="worker")
-      → get_next_task() → create_branch → work → complete_task(branch=...)
-      → ... → end_session()
+      → LOOP[get_next_task() → create_branch → work → complete_task(branch=...)]
+      → end_session()
+      (continue until no matching tasks remain)
 ```
+
+**Key principle:** All session types loop continuously until work is exhausted. No pausing to ask for permission.
 
 ---
 

@@ -5,7 +5,7 @@ Supports both single-session and parallel multi-session workflows with
 atomic task assignment, session tracking, and git-native branch workflows.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "Paul Kasay"
 
 from claudia.agent import Agent

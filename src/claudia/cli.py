@@ -1415,14 +1415,86 @@ def cmd_subtask(args, agent, use_json, dry_run):
         print("Usage: claudia subtask <create|list|progress> ...")
 
 
-def cmd_session(args, agent, use_json):
-    """Show session info."""
+def _get_session_age_seconds(session: dict) -> float:
+    """Get seconds since last heartbeat for a session."""
+    hb_time = session.get('last_heartbeat', '')
+    if not hb_time:
+        return float('inf')
+    try:
+        if hb_time.endswith('Z'):
+            hb_time = hb_time[:-1] + '+00:00'
+        dt = datetime.fromisoformat(hb_time)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).total_seconds()
+    except (ValueError, TypeError):
+        return float('inf')
+
+
+def cmd_session(args, agent, use_json, dry_run=False):
+    """Show session info or manage sessions."""
     sessions_dir = agent.state_dir / 'sessions'
 
-    if args.session_id:
-        session_file = sessions_dir / f'session-{args.session_id}.json'
+    # Handle cleanup subcommand (can be triggered by subparser or session_id='cleanup')
+    session_command = getattr(args, 'session_command', None)
+    session_id_arg = getattr(args, 'session_id', None)
+
+    # Support both 'claudia session cleanup' via subparser and positional arg
+    if session_command == 'cleanup' or session_id_arg == 'cleanup':
+        threshold = getattr(args, 'threshold', 180)  # 3 minutes default
+
+        if not sessions_dir.exists():
+            print("No sessions directory")
+            return
+
+        session_files = list(sessions_dir.glob('session-*.json'))
+        if not session_files:
+            print("No sessions to clean up")
+            return
+
+        stale_sessions = []
+        for sf in session_files:
+            try:
+                session = json.loads(sf.read_text())
+                age = _get_session_age_seconds(session)
+                if age > threshold:
+                    stale_sessions.append((sf, session, age))
+            except (json.JSONDecodeError, OSError):
+                # Corrupt file, mark for cleanup
+                stale_sessions.append((sf, {'session_id': sf.stem.replace('session-', '')}, float('inf')))
+
+        if not stale_sessions:
+            print(f"No stale sessions (threshold: {threshold}s)")
+            return
+
+        if dry_run:
+            print(f"Would remove {len(stale_sessions)} stale session(s):")
+            for sf, session, age in stale_sessions:
+                sid = session.get('session_id', 'unknown')
+                age_str = f"{int(age)}s" if age != float('inf') else "corrupt"
+                print(f"  • {sid} (last heartbeat: {age_str} ago)")
+            return
+
+        if use_json:
+            removed = []
+            for sf, session, age in stale_sessions:
+                sf.unlink()
+                removed.append(session.get('session_id', sf.stem))
+            print(json.dumps({'removed': removed, 'count': len(removed)}, indent=2))
+        else:
+            print(f"Removing {len(stale_sessions)} stale session(s):")
+            for sf, session, age in stale_sessions:
+                sid = session.get('session_id', 'unknown')
+                sf.unlink()
+                print(f"  ✓ {sid}")
+            print(f"\n✓ Cleaned up {len(stale_sessions)} session(s)")
+        return
+
+    # Handle show subcommand or direct session_id argument
+    if session_id_arg and session_id_arg != 'cleanup':
+        session_file = sessions_dir / f'session-{session_id_arg}.json'
         if not session_file.exists():
-            print(f"✗ Session '{args.session_id}' not found")
+            print(f"✗ Session '{session_id_arg}' not found")
             return
 
         session = json.loads(session_file.read_text())
@@ -1462,7 +1534,7 @@ def cmd_session(args, agent, use_json):
                         print(f"  • {tid} (task not found)")
             else:
                 tasks = agent.get_tasks()
-                assigned = [t for t in tasks if t.get('assignee') == args.session_id]
+                assigned = [t for t in tasks if t.get('assignee') == session_id_arg]
                 if assigned:
                     print(f"\nAssigned tasks ({len(assigned)}):")
                     for task in assigned:
@@ -1471,6 +1543,7 @@ def cmd_session(args, agent, use_json):
                     print("\nNo active tasks.")
             print()
     else:
+        # List all sessions
         if not sessions_dir.exists():
             print("No sessions directory")
             return
@@ -1499,6 +1572,7 @@ def cmd_session(args, agent, use_json):
                     print(f"    Labels: {', '.join(s['labels'])}")
                 print(f"    Working on: {working} task(s), heartbeat: {_format_duration(s.get('last_heartbeat', ''))} ago")
             print(f"\nTip: Use 'claudia session <id>' for details")
+            print(f"     Use 'claudia session cleanup' to remove stale sessions")
 
 
 # ============================================================================
@@ -1669,8 +1743,16 @@ Examples:
     subparsers.add_parser('stop-parallel', help='Stop parallel mode')
 
     # session
-    session_p = subparsers.add_parser('session', help='Show session info')
-    session_p.add_argument('session_id', nargs='?')
+    session_p = subparsers.add_parser('session', help='Manage sessions')
+    session_sub = session_p.add_subparsers(dest='session_command')
+
+    # session (no subcommand) - list sessions
+    session_p.add_argument('session_id', nargs='?', help='Session ID to show details')
+
+    # session cleanup
+    session_cleanup = session_sub.add_parser('cleanup', help='Remove stale sessions')
+    session_cleanup.add_argument('--threshold', '-t', type=int, default=180,
+                                  help='Stale threshold in seconds (default: 180 = 3 minutes)')
 
     # dashboard
     dashboard_p = subparsers.add_parser('dashboard', help='Launch dashboard')
@@ -1764,7 +1846,7 @@ Examples:
         elif args.command == 'subtask':
             cmd_subtask(args, agent, use_json, dry_run)
         elif args.command == 'session':
-            cmd_session(args, agent, use_json)
+            cmd_session(args, agent, use_json, dry_run)
         elif args.command == 'start-parallel':
             success = agent.start_parallel_mode(port=args.port)
             if success:

@@ -310,7 +310,7 @@ def main(state_dir=None, refresh=3.0, once=False, no_alt_screen=False):
         once = args.once
         no_alt_screen = args.no_alt_screen
 
-    state_dir = Path(state_dir)
+    state_dir = Path(state_dir).resolve()
 
     if not state_dir.exists():
         print(f"{Colors.RED}State directory not found: {state_dir}{Colors.RESET}")

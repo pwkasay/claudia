@@ -125,6 +125,10 @@ claudia stop-parallel
 claudia session
 claudia session session-abc123        # Session details
 
+# Clean up stale sessions (orphaned from crashed/force-quit sessions)
+claudia session cleanup               # Remove sessions inactive >3 min
+claudia session cleanup --threshold 60  # Custom threshold in seconds
+
 # Watch real-time dashboard
 claudia dashboard
 claudia dashboard --refresh 2
