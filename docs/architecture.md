@@ -1,202 +1,151 @@
 # Architecture Overview
 
-Claudia v2.0 - A lightweight task coordination system for Claude Code
+A lightweight task coordination system for Claude Code
 
 ## Project Structure
 
 ```
-src/claudia/
-├── __init__.py      # Package exports (Agent, __version__)
-├── agent.py         # Unified client API (single/parallel modes)
-├── cli.py           # Command-line interface
-├── coordinator.py   # Async HTTP server for parallel mode
-├── dashboard.py     # Terminal UI with monitoring
-├── colors.py        # Terminal color utilities
-└── docs.py          # Documentation generation
+  src/claudia/ (7 files, python)
+tests/ (6 files, python)
 ```
-
-## Operating Modes
-
-### Single Mode (Default)
-- Direct JSON file access with atomic write (tmp + rename)
-- File locking (`FileLock`) for concurrent safety
-- No server required - all state in `.agent-state/tasks.json`
-
-### Parallel Mode
-- Coordinator runs as background HTTP server
-- Agent detects mode via `.agent-state/.parallel-mode` file
-- All operations route through HTTP to coordinator
-- Atomic task assignment with smart load balancing
-- Retry logic with exponential backoff (0.5s → 1s → 2s → 4s, max 8s)
 
 ## Key Modules
 
-### `agent.py` - Unified Client API
+### `src/claudia/agent.py`
+Unified Agent Client for Claudia.
 
-The Agent class provides a unified interface that works in both modes.
+Works in two modes:
+1. SINGLE MODE (default): Direct JSON file access, no server needed
+2.
 
-**Core Features:**
-- Mode detection and automatic routing
-- Session management (register, heartbeat, end)
-- Task CRUD operations
-- Subtask hierarchy (v2.0)
-- Templates for reusable task patterns (v2.0)
-- Time tracking with start/stop/pause (v2.0)
-- Bulk operations (v1.1)
-- Undo system with action history (v1.1)
-- Archiving old completed tasks (v1.1)
+**Classes:**
+- `FileLock`: __init__(), acquire(), release(), __enter__(), __exit__()
+- `Agent`: __post_init__(), is_parallel_mode(), get_mode(), register(), heartbeat(), ... (+15 more)
 
-**Key Classes:**
-- `FileLock` - Cross-platform file locking (fcntl/msvcrt)
-- `Agent` - Main client class with 40+ methods
+**Key functions:**
+- `file_lock()`
+- `is_task_ready()`
 
-### `cli.py` - Command Line Interface
+### `src/claudia/cli.py`
 
-Rich CLI with colored output and comprehensive commands.
+**Key functions:**
+- `cmd_init()`
+- `cmd_uninstall()`
+- `cmd_update()`
+- `cmd_status()`
+- `cmd_tasks()`
 
-**Command Categories:**
-- Task management: create, show, edit, delete, complete, reopen
-- Subtasks: create, list, progress
-- Templates: list, create, show, delete
-- Time tracking: start, stop, pause, status, report
-- Archiving: run, list, restore
-- Parallel mode: start-parallel, stop-parallel, session, dashboard
+### `src/claudia/colors.py`
+Colors Utility Module
 
-**Global Flags:**
-- `--json` - Machine-readable output
-- `--dry-run` - Preview changes
-- `--verbose` - Detailed errors
+Provides terminal color support with automatic detection of terminal capabilities.
+Extracted from dashboard.py for reuse across CLI components.
 
-### `coordinator.py` - Parallel Mode Server
+**Classes:**
+- `Colors`: is_enabled(), priority_color(), status_color(), format_priority(), format_status()
 
-Async HTTP server using raw sockets and asyncio.
+**Key functions:**
+- `priority_str()`
+- `status_str()`
+- `colorize()`
 
-**Features:**
-- Atomic task claiming with locking
-- Smart assignment based on label affinity
-- Load balancing across sessions
-- Session heartbeat monitoring
-- Real-time state broadcasting
+### `src/claudia/coordinator.py`
 
-**Key Classes:**
-- `TaskStatus` - Enum: OPEN, IN_PROGRESS, DONE, BLOCKED
-- `Task` - Task dataclass with v2 schema
-- `Session` - Session state tracking
-- `CoordinatorState` - Shared state with pub/sub
-- `Coordinator` - HTTP request handling
+**Classes:**
+- `TaskStatus`
+- `Task`: to_dict(), from_dict()
+- `Session`: to_dict(), from_dict()
+- `CoordinatorState`: __init__(), subscribe(), unsubscribe()
+- `Coordinator`: __init__(), score_task()
 
-### `dashboard.py` - Terminal UI
+### `src/claudia/dashboard.py`
 
-Real-time monitoring dashboard.
+**Key functions:**
+- `clear()`
+- `time_ago()`
+- `load_state_direct()`
+- `render()`
+- `enter_alt_screen()`
 
-**Features:**
-- Task queue visualization
-- Session status with stale warnings (60s yellow, 120s red)
-- Ready/in-progress/completed task counts
-- Alternate screen buffer (preserves scrollback)
+### `src/claudia/docs.py`
+Documentation Agent for Claudia.
 
-### `colors.py` - Terminal Colors
+Generates human-centered documentation about codebase architecture,
+development workflows, and APIs. Designed to be concise and actionable,
+not verbose AI-speak.
 
-Automatic color detection with override support.
+**Classes:**
+- `ProjectMetadata`
+- `FileInfo`
+- `DocsAgent`: __post_init__(), extract_toml_value(), extract_value(), analyze(), generate()
 
-**Environment Variables:**
-- `FORCE_COLOR` - Force colors on (checked first)
-- `NO_COLOR` - Force colors off
+**Key functions:**
+- `cmd_docs()`
 
-### `docs.py` - Documentation Generator
+### `tests/conftest.py`
+Pytest configuration and shared fixtures for Claudia tests.
 
-Analyzes codebase and generates documentation.
+**Key functions:**
+- `temp_state_dir()`
+- `agent()`
+- `sample_tasks()`
+- `agent_with_tasks()`
+- `sample_template()`
 
-**Output Types:**
-- Architecture overview
-- Onboarding guide
-- API reference
-- README
+### `tests/test_agent.py`
+Tests for the Agent class (single mode).
 
-## Data Flow
+**Classes:**
+- `TestAgentBasics`: test_agent_init(), test_get_status_empty(), test_get_status_with_tasks()
+- `TestTaskCRUD`: test_create_task(), test_get_tasks(), test_get_tasks_filtered(), test_edit_task(), test_edit_task_not_found(), ... (+2 more)
+- `TestTaskWorkflow`: test_get_next_task(), test_get_next_task_with_labels(), test_get_next_task_empty(), test_complete_task(), test_reopen_task()
+- `TestSubtasks`: test_create_subtask(), test_create_subtask_parent_not_found(), test_get_subtasks(), test_get_subtask_progress()
+- `TestTemplates`: test_list_templates_empty(), test_create_template(), test_get_template(), test_delete_template(), test_create_from_template()
 
-### Single Mode
-```
-CLI → Agent → FileLock → tasks.json
-                ↓
-           history.jsonl (undo data)
-```
+### `tests/test_cli.py`
+Tests for the CLI module.
 
-### Parallel Mode
-```
-CLI → Agent → HTTP Request → Coordinator → State
-                    ↓              ↓
-              Retry Logic    AsyncIO Lock
-                    ↓              ↓
-              Exponential      Atomic
-              Backoff         Assignment
-```
+**Classes:**
+- `TestCLICommands`: test_cli_help(), test_cli_version(), test_cli_status(), test_cli_status_json(), test_cli_create(), ... (+5 more)
+- `TestCLISubtasks`: test_subtask_create(), test_subtask_list()
+- `TestCLITemplates`: test_template_create(), test_template_list()
+- `TestCLITime`: test_time_start_stop(), test_time_report()
+- `TestCLIArchive`: test_archive_dry_run(), test_archive_list()
 
-## State Directory
+### `tests/test_colors.py`
+Tests for the colors module.
 
-```
-.agent-state/
-├── tasks.json        # Main task storage (v2 schema)
-├── templates.json    # Task templates
-├── archive.jsonl     # Archived tasks
-├── history.jsonl     # Event log with undo data
-├── sessions/         # Session state files
-├── .parallel-mode    # Mode flag + port info
-├── coordinator.pid   # Process management
-└── .lock             # File lock for single mode
-```
+**Classes:**
+- `TestColorsDetection`: test_force_color_env(), test_no_color_env()
+- `TestColorsFormatting`: test_format_priority(), test_format_status(), test_colorize()
+- `TestColorsDisabled`: test_format_priority_no_color(), test_format_status_no_color()
+- `TestColorConstants`: test_color_codes(), test_is_enabled()
 
-## Task Schema (v2)
+### `tests/test_docs.py`
+Tests for the DocsAgent documentation generator.
 
-```json
-{
-  "id": "task-001",
-  "title": "Task title",
-  "description": "Optional description",
-  "status": "open",
-  "priority": 2,
-  "labels": ["backend"],
-  "assignee": null,
-  "blocked_by": [],
-  "notes": [],
-  "created_at": "2024-01-15T10:00:00Z",
-  "updated_at": "2024-01-15T10:00:00Z",
-  "parent_id": null,
-  "subtasks": [],
-  "is_subtask": false,
-  "time_tracking": {
-    "total_seconds": 0,
-    "started_at": null,
-    "is_running": false,
-    "is_paused": false
-  }
-}
-```
+**Classes:**
+- `Config`: validate(), to_dict()
+- `Application`: __init__(), run(), stop()
+- `TestProjectMetadataLoading`: test_parse_pyproject_toml(), test_parse_package_json(), test_parse_setup_py()
+- `TestFileAnalysis`: test_analyze_python_file(), test_analyze_js_file(), test_extract_python_imports(), test_extract_python_classes(), test_extract_python_methods(), ... (+3 more)
+- `TestSkillLevels`: test_level_limit_junior(), test_level_limit_mid(), test_level_limit_senior(), test_level_content(), test_is_level()
 
-## HTTP API Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/status` | GET | System status |
-| `/tasks` | GET | List tasks |
-| `/session/register` | POST | Register session |
-| `/session/heartbeat` | POST | Keep alive |
-| `/task/create` | POST | Create task |
-| `/task/request` | POST | Claim task |
-| `/task/complete` | POST | Complete task |
-| `/task/reopen` | POST | Reopen task |
-| `/task/edit` | POST | Edit task |
-| `/task/delete` | POST | Delete task |
-| `/task/bulk-complete` | POST | Bulk complete |
-| `/subtask/create` | POST | Create subtask |
-| `/subtask/progress` | GET | Subtask progress |
-
-## Dependencies
-
-- Python 3.10+ (standard library only)
-- Optional: `certifi` for SSL on macOS
+**Key functions:**
+- `temp_project_dir()`
+- `python_project()`
+- `main()`
+- `helper_function()`
+- `format_string()`
 
 ## Entry Points
 
-- CLI: `claudia` command (via `cli.main()`)
-- Python API: `from claudia import Agent`
+- **src/claudia/cli.py**: Entry point: cli.py
+
+## Dependencies
+
+- `React`
+- `certifi`
+- `pytest`
+- `setuptools`
+- `{`
