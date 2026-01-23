@@ -42,9 +42,10 @@ ssl = [
 claudia = "claudia.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/paulkasay/claudia"
-Repository = "https://github.com/paulkasay/claudia"
-Issues = "https://github.com/paulkasay/claudia/issues"
+Homepage = "https://github.com/pwkasay/claudia"
+Repository = "https://github.com/pwkasay/claudia"
+Issues = "https://github.com/pwkasay/claudia/issues"
+Changelog = "https://github.com/pwkasay/claudia/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/claudia"]
