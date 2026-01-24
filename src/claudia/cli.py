@@ -13,7 +13,6 @@ Usage:
 
 import argparse
 import json
-import os
 import shutil
 import sys
 import urllib.request
@@ -218,13 +217,13 @@ def cmd_init(args):
                 f.write('\n# Claudia agent state\n')
                 for entry in added:
                     f.write(entry + '\n')
-            print(f"  ✓ Updated .gitignore")
+            print("  ✓ Updated .gitignore")
     else:
         with open(gitignore, 'w') as f:
             f.write('# Claudia agent state\n')
             for entry in gitignore_entries:
                 f.write(entry + '\n')
-        print(f"  ✓ Created .gitignore")
+        print("  ✓ Created .gitignore")
 
     # Append to CLAUDE.md
     claude_md = target / 'CLAUDE.md'
@@ -248,10 +247,10 @@ def cmd_init(args):
     }, indent=2))
     print(f"  ✓ Claudia v{__version__} initialized")
 
-    print(f"\n✅ Claudia initialized!")
-    print(f"\nNext steps:")
-    print(f"  claudia create 'My first task' -p 1")
-    print(f"  claudia status")
+    print("\n✅ Claudia initialized!")
+    print("\nNext steps:")
+    print("  claudia create 'My first task' -p 1")
+    print("  claudia status")
 
     return 0
 
@@ -271,10 +270,10 @@ def cmd_uninstall(args):
 
     if not args.force:
         print(f"This will remove Claudia from {target}")
-        print(f"  - Delete .agent-state/ directory")
+        print("  - Delete .agent-state/ directory")
         if not args.keep_history:
-            print(f"  - Including task history")
-        print(f"  - Clean CLAUDE.md")
+            print("  - Including task history")
+        print("  - Clean CLAUDE.md")
         response = input("\nProceed? [y/N] ")
         if response.lower() != 'y':
             print("Cancelled")
@@ -290,11 +289,11 @@ def cmd_uninstall(args):
             shutil.copy(history_file, backup_dir / 'history.jsonl')
         if tasks_file.exists():
             shutil.copy(tasks_file, backup_dir / 'tasks.json')
-        print(f"  ✓ Backed up history to .claudia-backup/")
+        print("  ✓ Backed up history to .claudia-backup/")
 
     # Remove state directory
     shutil.rmtree(state_dir)
-    print(f"  ✓ Removed .agent-state/")
+    print("  ✓ Removed .agent-state/")
 
     # Clean CLAUDE.md
     claude_md = target / 'CLAUDE.md'
@@ -321,10 +320,10 @@ def cmd_uninstall(args):
             new_content = '\n'.join(new_lines).rstrip() + '\n'
             if new_content.strip():
                 claude_md.write_text(new_content)
-                print(f"  ✓ Cleaned CLAUDE.md")
+                print("  ✓ Cleaned CLAUDE.md")
             else:
                 claude_md.unlink()
-                print(f"  ✓ Removed empty CLAUDE.md")
+                print("  ✓ Removed empty CLAUDE.md")
 
     # Clean .gitignore
     gitignore = target / '.gitignore'
@@ -347,7 +346,7 @@ def cmd_uninstall(args):
         while '\n\n\n' in new_content:
             new_content = new_content.replace('\n\n\n', '\n\n')
         gitignore.write_text(new_content.rstrip() + '\n')
-        print(f"  ✓ Cleaned .gitignore")
+        print("  ✓ Cleaned .gitignore")
 
     print(f"\n✅ Claudia removed from {target}")
     return 0
@@ -414,23 +413,23 @@ def cmd_update(args):
 
                 if ssl_warning:
                     print("  (SSL verification disabled - install certifi for secure updates)")
-                    print(f"  pip install certifi")
+                    print("  pip install certifi")
                     print()
 
                 if latest and latest != __version__:
                     print(f"New version available: {latest}")
-                    print(f"\nTo upgrade:")
+                    print("\nTo upgrade:")
                     print(f"  pip install --upgrade git+https://github.com/{GITHUB_REPO}.git")
                 elif latest:
-                    print(f"You're on the latest version!")
+                    print("You're on the latest version!")
                 else:
-                    print(f"No releases found yet")
+                    print("No releases found yet")
 
         except urllib.error.URLError as e:
             if 'SSL' in str(e) or 'certificate' in str(e).lower():
-                print(f"SSL certificate error. To fix:")
-                print(f"  pip install 'claudia[ssl]'")
-                print(f"  # or: pip install certifi")
+                print("SSL certificate error. To fix:")
+                print("  pip install 'claudia[ssl]'")
+                print("  # or: pip install certifi")
             else:
                 print(f"Could not check for updates: {e}")
             return 1
@@ -438,8 +437,8 @@ def cmd_update(args):
             print(f"Error checking for updates: {e}")
             return 1
     else:
-        print(f"\nUsage:")
-        print(f"  claudia update --check     Check for new versions")
+        print("\nUsage:")
+        print("  claudia update --check     Check for new versions")
         print(f"  pip install --upgrade git+https://github.com/{GITHUB_REPO}.git")
 
     return 0
@@ -644,7 +643,7 @@ def cmd_show(args, agent, use_json):
 
         description = task.get('description', '')
         if description:
-            print(f"\nDescription:")
+            print("\nDescription:")
             for line in description.split('\n'):
                 print(f"  {line}")
 
@@ -713,7 +712,7 @@ def cmd_create(args, agent, use_json, dry_run):
         return
 
     if dry_run:
-        print(f"Would create task:")
+        print("Would create task:")
         print(f"  Title:       {args.title}")
         print(f"  Priority:    {_format_priority(args.priority)}")
         if args.labels:
@@ -752,7 +751,7 @@ def cmd_next(args, agent, use_json, dry_run):
         if ready:
             task = ready[0]
             print(f"Would claim: {_format_task_short(task)}")
-            print(f"  Status would change: open → in_progress")
+            print("  Status would change: open → in_progress")
             if task.get('description'):
                 print(f"  Description: {task['description'][:80]}...")
         else:
@@ -817,7 +816,7 @@ def cmd_complete(args, agent, use_json, dry_run):
                 if progress and progress.get('completed', 0) < progress.get('total', 0):
                     print(f"  Warning: {progress['total'] - progress['completed']} subtask(s) not complete")
                     if not force:
-                        print(f"  Use --force to complete anyway")
+                        print("  Use --force to complete anyway")
             for note in task_info.get('notes', []):
                 if 'Claimed' in note.get('note', ''):
                     print(f"  Duration: {_format_duration(note['timestamp'])}")
@@ -842,7 +841,7 @@ def cmd_complete(args, agent, use_json, dry_run):
                 print(f"  • {st['id']}: {st['title']} [{st['status']}]")
             if len(incomplete) > 5:
                 print(f"  ... and {len(incomplete) - 5} more")
-            print(f"\nUse --force to complete anyway")
+            print("\nUse --force to complete anyway")
         else:
             status = task_info.get('status', 'unknown')
             if status == 'done':
@@ -901,7 +900,7 @@ def cmd_complete(args, agent, use_json, dry_run):
                     else:
                         print(f"  • {tid}: {error}")
             if any(f.get('error') == 'incomplete_subtasks' for f in failed):
-                print(f"\nUse --force to complete tasks with incomplete subtasks")
+                print("\nUse --force to complete tasks with incomplete subtasks")
 
 
 def cmd_edit(args, agent, use_json, dry_run):
@@ -915,7 +914,7 @@ def cmd_edit(args, agent, use_json, dry_run):
 
     # Check if any changes were specified
     if args.title is None and args.description is None and args.priority is None and args.labels is None:
-        print(f"✗ No changes specified. Use --title, --description, --priority, or --labels")
+        print("✗ No changes specified. Use --title, --description, --priority, or --labels")
         return
 
     if dry_run:
@@ -923,7 +922,7 @@ def cmd_edit(args, agent, use_json, dry_run):
         if args.title:
             print(f"  Title: {task_info.get('title')} → {args.title}")
         if args.description:
-            print(f"  Description: (updated)")
+            print("  Description: (updated)")
         if args.priority is not None:
             print(f"  Priority: P{task_info.get('priority', 2)} → P{args.priority}")
         if args.labels is not None:
@@ -962,7 +961,7 @@ def cmd_delete(args, agent, use_json, dry_run):
         if subtasks:
             print(f"  Warning: Has {len(subtasks)} subtask(s)")
             if not args.force:
-                print(f"  Use --force to delete with subtasks")
+                print("  Use --force to delete with subtasks")
         return
 
     result = agent.delete_task(args.task_id, force=args.force)
@@ -981,7 +980,7 @@ def cmd_delete(args, agent, use_json, dry_run):
         print(f"  Subtasks: {', '.join(subtasks[:5])}")
         if len(subtasks) > 5:
             print(f"  ... and {len(subtasks) - 5} more")
-        print(f"\nUse --force to delete anyway")
+        print("\nUse --force to delete anyway")
     else:
         print(f"✗ Could not delete '{args.task_id}'")
 
@@ -1260,7 +1259,7 @@ def cmd_template(args, agent, use_json, dry_run):
 
     elif args.template_command == 'create':
         if dry_run:
-            print(f"Would create template:")
+            print("Would create template:")
             print(f"  Name: {args.name}")
             print(f"  Priority: P{args.priority}")
             if args.labels:
@@ -1321,7 +1320,7 @@ def cmd_template(args, agent, use_json, dry_run):
             if labels:
                 print(f"Labels:   {', '.join(labels)}")
             if template.get('description'):
-                print(f"\nDescription:")
+                print("\nDescription:")
                 print(f"  {template['description']}")
             subtasks = template.get('subtasks', [])
             if subtasks:
@@ -1557,7 +1556,7 @@ def cmd_session(args, agent, use_json, dry_run=False):
         for sf in session_files:
             try:
                 sessions.append(json.loads(sf.read_text()))
-            except:
+            except (json.JSONDecodeError, OSError):
                 pass
 
         if use_json:
@@ -1571,8 +1570,8 @@ def cmd_session(args, agent, use_json, dry_run=False):
                 if s.get('labels'):
                     print(f"    Labels: {', '.join(s['labels'])}")
                 print(f"    Working on: {working} task(s), heartbeat: {_format_duration(s.get('last_heartbeat', ''))} ago")
-            print(f"\nTip: Use 'claudia session <id>' for details")
-            print(f"     Use 'claudia session cleanup' to remove stale sessions")
+            print("\nTip: Use 'claudia session <id>' for details")
+            print("     Use 'claudia session cleanup' to remove stale sessions")
 
 
 # ============================================================================
@@ -1702,7 +1701,7 @@ Examples:
     template_p = subparsers.add_parser('template', help='Manage task templates')
     template_sub = template_p.add_subparsers(dest='template_command')
 
-    template_list = template_sub.add_parser('list', help='List templates')
+    template_sub.add_parser('list', help='List templates')
 
     template_create = template_sub.add_parser('create', help='Create a template')
     template_create.add_argument('name', help='Template name')
@@ -1771,13 +1770,16 @@ Examples:
 
     docs_generate = docs_sub.add_parser('generate', help='Generate documentation')
     docs_generate.add_argument('--type', '-t', default='architecture',
-                               choices=['architecture', 'onboarding', 'api', 'readme'],
-                               help='Documentation type')
+                               choices=['architecture', 'onboarding', 'api', 'readme', 'insights'],
+                               help='Documentation type (insights=AI-assisted analysis)')
     docs_generate.add_argument('--level', '-L', default='mid',
                                choices=['junior', 'mid', 'senior'],
                                help='Detail level (junior=verbose, mid=balanced, senior=minimal)')
     docs_generate.add_argument('--output', '-o', help='Output file path')
     docs_generate.add_argument('path', nargs='?', help='Project path')
+
+    docs_context = docs_sub.add_parser('context', help='Output structured context for Claude Code')
+    docs_context.add_argument('path', nargs='?', help='Project path')
 
     docs_all = docs_sub.add_parser('all', help='Generate all documentation')
     docs_all.add_argument('--level', '-L', default='mid',
@@ -1864,7 +1866,7 @@ Examples:
     except KeyboardInterrupt:
         print("\nInterrupted")
         sys.exit(130)
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         print(f"✗ State directory not found: {args.state_dir}")
         print("  Run 'claudia init' to initialize")
         if verbose:

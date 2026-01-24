@@ -4,11 +4,9 @@ Tests for the Agent class (single mode).
 
 import json
 import time
-from datetime import datetime, timedelta, timezone
 
-import pytest
 
-from claudia.agent import Agent, is_task_ready
+from claudia.agent import is_task_ready
 
 
 class TestAgentBasics:

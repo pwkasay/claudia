@@ -5,9 +5,7 @@ Tests for the CLI module.
 import json
 import subprocess
 import sys
-from pathlib import Path
 
-import pytest
 
 
 class TestCLICommands:

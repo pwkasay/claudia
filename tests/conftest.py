@@ -3,7 +3,6 @@ Pytest configuration and shared fixtures for Claudia tests.
 """
 
 import json
-import os
 import shutil
 import tempfile
 from pathlib import Path

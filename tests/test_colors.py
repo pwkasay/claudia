@@ -2,9 +2,7 @@
 Tests for the colors module.
 """
 
-import os
 
-import pytest
 
 
 class TestColorsDetection:

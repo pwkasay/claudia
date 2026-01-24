@@ -15,7 +15,6 @@ Usage:
 
 import fnmatch
 import json
-import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -70,6 +69,136 @@ class FileInfo:
     class_docstrings: dict = field(default_factory=dict)  # {class_name: docstring}
     function_docstrings: dict = field(default_factory=dict)  # {function_name: docstring}
     signatures: dict = field(default_factory=dict)  # {function_name: {params, return_type}}
+
+
+@dataclass
+class LanguageConfig:
+    """Configuration for language-specific code analysis.
+
+    Provides regex patterns for extracting symbols from source files.
+    Used by the universal symbol extractor to support multiple languages.
+    """
+    extensions: tuple
+    class_pattern: str = None  # Regex to match class/struct/type definitions
+    function_pattern: str = None  # Regex to match function definitions
+    import_pattern: str = None  # Regex to match import statements
+    export_pattern: str = None  # Regex to match exports (for JS/TS)
+    comment_single: str = '//'  # Single-line comment prefix
+    comment_multi: tuple = ('/*', '*/')  # Multi-line comment delimiters
+    private_prefix: str = '_'  # Prefix for private symbols (Python convention)
+
+
+# Language configurations for universal symbol extraction
+LANGUAGE_CONFIGS = {
+    'python': LanguageConfig(
+        extensions=('.py',),
+        class_pattern=r'^class\s+(\w+)',
+        function_pattern=r'^def\s+(\w+)\s*\(',
+        import_pattern=r'^(?:from\s+(\S+)\s+import|import\s+(\S+))',
+        comment_single='#',
+        comment_multi=('"""', '"""'),
+        private_prefix='_',
+    ),
+    'javascript': LanguageConfig(
+        extensions=('.js', '.jsx', '.mjs', '.cjs'),
+        class_pattern=r'^(?:export\s+)?class\s+(\w+)',
+        function_pattern=r'^(?:export\s+)?(?:async\s+)?function\s+(\w+)',
+        # Matches ES6 imports AND CommonJS require()
+        import_pattern=r'^import\s+.*from\s+[\'"]([^\'"]+)[\'"]|require\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)',
+        export_pattern=r'^export\s+(?:default\s+)?(?:const|let|var|function|class)\s+(\w+)',
+        private_prefix='_',
+    ),
+    'typescript': LanguageConfig(
+        extensions=('.ts', '.tsx'),
+        class_pattern=r'^(?:export\s+)?(?:abstract\s+)?class\s+(\w+)',
+        function_pattern=r'^(?:export\s+)?(?:async\s+)?function\s+(\w+)',
+        import_pattern=r'^import\s+.*from\s+[\'"]([^\'"]+)[\'"]',
+        export_pattern=r'^export\s+(?:default\s+)?(?:const|let|var|function|class|interface|type)\s+(\w+)',
+        private_prefix='_',
+    ),
+    'go': LanguageConfig(
+        extensions=('.go',),
+        class_pattern=r'^type\s+(\w+)\s+struct\s*\{',
+        function_pattern=r'^func\s+(?:\([^)]+\)\s+)?(\w+)\s*\(',
+        import_pattern=r'^\s*"([^"]+)"',  # Inside import block
+        comment_single='//',
+        private_prefix='',  # Go uses capitalization for visibility
+    ),
+    'rust': LanguageConfig(
+        extensions=('.rs',),
+        class_pattern=r'^(?:pub\s+)?(?:struct|enum|trait)\s+(\w+)',
+        function_pattern=r'^(?:pub\s+)?(?:async\s+)?fn\s+(\w+)',
+        import_pattern=r'^use\s+([^;{]+)',
+        comment_single='//',
+        private_prefix='',  # Rust uses pub for visibility
+    ),
+    'java': LanguageConfig(
+        extensions=('.java',),
+        class_pattern=r'^(?:public\s+)?(?:abstract\s+)?(?:final\s+)?class\s+(\w+)',
+        function_pattern=r'^\s*(?:public|private|protected)?\s*(?:static\s+)?(?:\w+\s+)+(\w+)\s*\([^)]*\)\s*(?:throws\s+\w+)?\s*\{',
+        import_pattern=r'^import\s+([\w.]+);',
+        comment_single='//',
+        private_prefix='',  # Java uses access modifiers
+    ),
+    'ruby': LanguageConfig(
+        extensions=('.rb',),
+        class_pattern=r'^class\s+(\w+)',
+        function_pattern=r'^def\s+(\w+)',
+        import_pattern=r'^require\s+[\'"]([^\'"]+)[\'"]',
+        comment_single='#',
+        private_prefix='_',
+    ),
+    'kotlin': LanguageConfig(
+        extensions=('.kt', '.kts'),
+        class_pattern=r'^(?:data\s+)?(?:sealed\s+)?class\s+(\w+)',
+        function_pattern=r'^(?:suspend\s+)?fun\s+(\w+)',
+        import_pattern=r'^import\s+([\w.]+)',
+        comment_single='//',
+        private_prefix='_',
+    ),
+    'swift': LanguageConfig(
+        extensions=('.swift',),
+        class_pattern=r'^(?:public\s+)?(?:final\s+)?(?:class|struct|enum|protocol)\s+(\w+)',
+        function_pattern=r'^(?:public\s+)?(?:static\s+)?func\s+(\w+)',
+        import_pattern=r'^import\s+(\w+)',
+        comment_single='//',
+        private_prefix='_',
+    ),
+    'c': LanguageConfig(
+        extensions=('.c', '.h'),
+        class_pattern=r'^(?:typedef\s+)?struct\s+(\w+)',
+        function_pattern=r'^(?:\w+\s+)+(\w+)\s*\([^)]*\)\s*\{',
+        import_pattern=r'^#include\s*[<"]([^>"]+)[>"]',
+        comment_single='//',
+        private_prefix='_',
+    ),
+    'cpp': LanguageConfig(
+        extensions=('.cpp', '.hpp', '.cc', '.cxx', '.hxx'),
+        class_pattern=r'^(?:template\s*<[^>]+>\s*)?class\s+(\w+)',
+        function_pattern=r'^(?:\w+\s+)+(\w+)\s*\([^)]*\)\s*(?:const)?\s*(?:override)?\s*\{',
+        import_pattern=r'^#include\s*[<"]([^>"]+)[>"]',
+        comment_single='//',
+        private_prefix='_',
+    ),
+}
+
+
+@dataclass
+class ProjectType:
+    """Detected project type and characteristics.
+
+    Used to generate appropriate documentation based on what kind
+    of project this is (CLI, library, web app, API, etc.).
+
+    Supports hybrid projects (e.g., Flask + Click = API + CLI) via
+    the secondary_types field.
+    """
+    primary: str  # cli, library, webapp, api, microservice
+    framework: str = ''  # Detected framework (Flask, FastAPI, React, etc.)
+    build_system: str = ''  # pip, npm, cargo, go mod, maven, etc.
+    confidence: float = 0.0  # 0.0 to 1.0
+    characteristics: list = field(default_factory=list)  # Additional traits
+    secondary_types: list = field(default_factory=list)  # Other detected types (hybrid projects)
 
 
 @dataclass
@@ -507,6 +636,13 @@ class DocsAgent:
                 info.exports = self._extract_js_exports(content)
                 info.functions = self._extract_js_functions(content)
                 info.classes = self._extract_js_classes(content)
+            elif info.language in LANGUAGE_CONFIGS:
+                # Use universal extraction for other supported languages
+                symbols = self._extract_symbols_universal(content, info.language)
+                info.classes = symbols.get('classes', [])
+                info.functions = symbols.get('functions', [])
+                info.imports = symbols.get('imports', [])
+                info.exports = symbols.get('exports', [])
 
             return info
         except Exception:
@@ -520,16 +656,97 @@ class DocsAgent:
             '.ts': 'typescript',
             '.jsx': 'javascript',
             '.tsx': 'typescript',
+            '.mjs': 'javascript',
             '.go': 'go',
             '.rs': 'rust',
             '.java': 'java',
             '.rb': 'ruby',
+            '.kt': 'kotlin',
+            '.kts': 'kotlin',
+            '.swift': 'swift',
             '.c': 'c',
             '.cpp': 'cpp',
+            '.cc': 'cpp',
+            '.cxx': 'cpp',
             '.h': 'c',
             '.hpp': 'cpp',
+            '.hxx': 'cpp',
         }
         return ext_map.get(file_path.suffix.lower(), 'unknown')
+
+    def _extract_symbols_universal(self, content: str, language: str) -> dict:
+        """Extract symbols using language-agnostic patterns.
+
+        Uses the LanguageConfig regex patterns to extract classes, functions,
+        imports, and exports from source code in any supported language.
+
+        Args:
+            content: Source code content
+            language: Language name (must be in LANGUAGE_CONFIGS)
+
+        Returns:
+            dict with 'classes', 'functions', 'imports', 'exports' lists
+        """
+        symbols = {
+            'classes': [],
+            'functions': [],
+            'imports': [],
+            'exports': [],
+        }
+
+        config = LANGUAGE_CONFIGS.get(language)
+        if not config:
+            return symbols
+
+        # Extract classes/structs/types
+        if config.class_pattern:
+            for match in re.finditer(config.class_pattern, content, re.MULTILINE):
+                name = match.group(1)
+                if name and name not in symbols['classes']:
+                    symbols['classes'].append(name)
+            symbols['classes'] = symbols['classes'][:self.MAX_CLASSES]
+
+        # Extract functions
+        if config.function_pattern:
+            for match in re.finditer(config.function_pattern, content, re.MULTILINE):
+                name = match.group(1)
+                if not name:
+                    continue
+                # Skip private symbols based on language conventions
+                if config.private_prefix and name.startswith(config.private_prefix):
+                    continue
+                # For Go, skip lowercase (unexported) functions
+                if language == 'go' and name[0].islower():
+                    continue
+                if name not in symbols['functions']:
+                    symbols['functions'].append(name)
+            symbols['functions'] = symbols['functions'][:self.MAX_FUNCTIONS]
+
+        # Extract imports
+        if config.import_pattern:
+            for match in re.finditer(config.import_pattern, content, re.MULTILINE):
+                # Handle patterns with multiple groups
+                module = None
+                for i in range(1, match.lastindex + 1 if match.lastindex else 2):
+                    try:
+                        if match.group(i):
+                            module = match.group(i).strip()
+                            break
+                    except IndexError:
+                        break
+                if module and module not in symbols['imports']:
+                    symbols['imports'].append(module)
+            symbols['imports'] = symbols['imports'][:self.MAX_IMPORTS]
+
+        # Extract exports (for JS/TS)
+        if config.export_pattern:
+            for match in re.finditer(config.export_pattern, content, re.MULTILINE):
+                name = match.group(1)
+                if name and name not in symbols['exports']:
+                    symbols['exports'].append(name)
+            symbols['exports'] = symbols['exports'][:self.MAX_EXPORTS]
+
+        return symbols
 
     def _extract_python_imports(self, content: str, include_stdlib: bool = False) -> list:
         """Extract Python imports.
@@ -787,9 +1004,22 @@ class DocsAgent:
         return ""
 
     def _extract_js_imports(self, content: str) -> list:
-        """Extract JavaScript/TypeScript imports."""
+        """Extract JavaScript/TypeScript imports.
+
+        Handles:
+        - ES6: import X from 'module' / import { X } from 'module'
+        - CommonJS: require('module') / const X = require('module')
+        """
         imports = []
-        for match in re.finditer(r"(?:import|require)\s*\(?['\"]([^'\"]+)['\"]", content):
+        # ES6: import ... from 'module'
+        for match in re.finditer(r"import\s+.*?from\s+['\"]([^'\"]+)['\"]", content):
+            module = match.group(1)
+            if not module.startswith('.'):
+                module = module.split('/')[0]
+                if module and module not in imports:
+                    imports.append(module)
+        # CommonJS: require('module')
+        for match in re.finditer(r"require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", content):
             module = match.group(1)
             if not module.startswith('.'):
                 module = module.split('/')[0]
@@ -883,7 +1113,7 @@ class DocsAgent:
                     self.entry_points.append({
                         'path': path,
                         'type': 'executable',
-                        'description': info.description or f"Executable module",
+                        'description': info.description or "Executable module",
                     })
 
     def _extract_key_concepts(self):
@@ -1006,6 +1236,7 @@ class DocsAgent:
             'onboarding': self._generate_onboarding,
             'api': self._generate_api,
             'readme': self._generate_readme,
+            'insights': self._generate_insights,
         }
 
         if doc_type not in generators:
@@ -1023,16 +1254,262 @@ class DocsAgent:
 
         return content
 
+    def generate_context(self) -> str:
+        """Generate structured context for Claude Code to analyze.
+
+        This method outputs a structured analysis that can be piped to Claude Code
+        for semantic understanding and enhanced documentation generation. The output
+        is designed to be read by an AI, not directly by humans.
+
+        Returns:
+            Structured markdown with project analysis for AI consumption.
+        """
+        if not self.files:
+            self.analyze()
+
+        project_type = self._detect_project_type()
+        project_name = self.metadata.name or self.project_dir.resolve().name
+
+        lines = [
+            "# Project Analysis Context",
+            "",
+            "This is a structured analysis for AI-assisted documentation generation.",
+            "",
+            "---",
+            "",
+            "## Project Identity",
+            "",
+            f"- **Name:** {project_name}",
+            f"- **Description:** {self.metadata.description or '(not specified)'}",
+            f"- **Version:** {self.metadata.version or '(not specified)'}",
+            f"- **License:** {self.metadata.license or '(not specified)'}",
+            "",
+            "## Detected Project Type",
+            "",
+            f"- **Primary Type:** {project_type.primary}",
+            f"- **Secondary Types:** {', '.join(project_type.secondary_types) or '(none)'}",
+            f"- **Framework:** {project_type.framework or '(none detected)'}",
+            f"- **Build System:** {project_type.build_system or '(unknown)'}",
+            f"- **Confidence:** {project_type.confidence:.0%}",
+            f"- **Characteristics:** {', '.join(project_type.characteristics) or '(none)'}",
+            "",
+            "## Languages & File Types",
+            "",
+        ]
+
+        # File type breakdown
+        for lang, info in sorted(self.structure['file_types'].items(), key=lambda x: -x[1]['files']):
+            lines.append(f"- {lang}: {info['files']} files ({info['lines']:,} lines)")
+        lines.append("")
+
+        # Key modules with their purposes
+        lines.extend([
+            "## Key Modules",
+            "",
+        ])
+
+        for path, file_info in sorted(self.files.items()):
+            if file_info.classes or len(file_info.functions) > 2:
+                desc = self._get_file_description(Path(path).name, file_info, file_info.description)
+                lines.append(f"### `{path}`")
+                lines.append("")
+                lines.append(f"**Purpose:** {desc}")
+                lines.append("")
+
+                if file_info.classes:
+                    lines.append("**Classes:**")
+                    for cls in file_info.classes[:5]:
+                        docstring = file_info.class_docstrings.get(cls, '')
+                        if docstring:
+                            lines.append(f"- `{cls}` - {self._smart_truncate(docstring, 100)}")
+                        else:
+                            lines.append(f"- `{cls}`")
+                    lines.append("")
+
+                if file_info.functions:
+                    public_funcs = [f for f in file_info.functions if not f.startswith('_')][:5]
+                    if public_funcs:
+                        lines.append("**Key Functions:**")
+                        for func in public_funcs:
+                            docstring = file_info.function_docstrings.get(func, '')
+                            if docstring:
+                                lines.append(f"- `{func}()` - {self._smart_truncate(docstring, 80)}")
+                            else:
+                                lines.append(f"- `{func}()`")
+                        lines.append("")
+
+        # Dependencies
+        lines.extend([
+            "## External Dependencies",
+            "",
+        ])
+        all_imports = set()
+        for file_info in self.files.values():
+            all_imports.update(file_info.imports)
+
+        # Filter to third-party only
+        # Exclude: stdlib, single-char artifacts, Java/Kotlin package prefixes
+        PACKAGE_PREFIXES = {'java', 'javax', 'org', 'com', 'io', 'net', 'kotlin', 'kotlinx'}
+        third_party = sorted([
+            i for i in all_imports
+            if i
+            and len(i) > 1  # Exclude single-char regex artifacts like '(' or '{'
+            and i.isalnum()  # Must be alphanumeric (no special chars)
+            and '.' not in i
+            and i not in STDLIB_MODULES
+            and i not in PACKAGE_PREFIXES
+        ])
+        if third_party:
+            for imp in third_party[:15]:
+                lines.append(f"- {imp}")
+        else:
+            lines.append("- (no third-party dependencies detected)")
+        lines.append("")
+
+        # Entry points
+        if self.entry_points:
+            lines.extend([
+                "## Entry Points",
+                "",
+            ])
+            for ep in self.entry_points[:5]:
+                lines.append(f"- `{ep['path']}` - {ep['description']}")
+            lines.append("")
+
+        # Architectural patterns (heuristic detection)
+        lines.extend([
+            "## Detected Patterns",
+            "",
+        ])
+        patterns = self._detect_architectural_patterns()
+        if patterns:
+            for pattern in patterns:
+                lines.append(f"- {pattern}")
+        else:
+            lines.append("- (no specific patterns detected)")
+        lines.append("")
+
+        # Instructions for Claude
+        lines.extend([
+            "---",
+            "",
+            "## Analysis Request",
+            "",
+            "Based on this project analysis, please provide:",
+            "",
+            "1. **Architecture insights** - How the components interact",
+            "2. **Code quality observations** - Patterns, anti-patterns, suggestions",
+            "3. **Onboarding recommendations** - Key concepts a new developer should understand",
+            "4. **Documentation gaps** - What's missing or unclear",
+            "",
+        ])
+
+        return '\n'.join(lines)
+
+    def _detect_architectural_patterns(self) -> list:
+        """Detect common architectural patterns in the codebase."""
+        patterns = []
+
+        all_classes = set()
+        all_dirs = set()
+
+        for path, file_info in self.files.items():
+            all_classes.update(file_info.classes)
+            for part in Path(path).parts[:-1]:
+                all_dirs.add(part.lower())
+
+        # Pattern detection
+        if any('Handler' in c or 'Controller' in c for c in all_classes):
+            patterns.append("Handler/Controller pattern (request handling)")
+
+        if any('Service' in c for c in all_classes):
+            patterns.append("Service layer pattern (business logic separation)")
+
+        if any('Repository' in c or 'DAO' in c for c in all_classes):
+            patterns.append("Repository pattern (data access abstraction)")
+
+        if any('Factory' in c for c in all_classes):
+            patterns.append("Factory pattern (object creation)")
+
+        if any('Singleton' in c for c in all_classes):
+            patterns.append("Singleton pattern")
+
+        if 'models' in all_dirs or 'entities' in all_dirs:
+            patterns.append("Domain models (models/ or entities/)")
+
+        if 'middleware' in all_dirs:
+            patterns.append("Middleware pattern")
+
+        if 'hooks' in all_dirs:
+            patterns.append("Hooks pattern (lifecycle callbacks)")
+
+        if 'plugins' in all_dirs or 'extensions' in all_dirs:
+            patterns.append("Plugin architecture")
+
+        if any('Agent' in c for c in all_classes):
+            patterns.append("Agent pattern (autonomous actors)")
+
+        if any('Command' in c for c in all_classes):
+            patterns.append("Command pattern")
+
+        if any('Observer' in c or 'Listener' in c for c in all_classes):
+            patterns.append("Observer/Listener pattern")
+
+        return patterns
+
+    def _generate_insights(self) -> str:
+        """Generate insights documentation.
+
+        This doc type outputs the structured context and prompts Claude Code
+        to provide semantic analysis. The output includes both the analysis
+        context and a request for AI-powered insights.
+
+        Note: This is meant to be run within a Claude Code session where
+        the AI can read the context and provide intelligent analysis.
+        """
+        context = self.generate_context()
+
+        lines = [
+            "# Project Insights",
+            "",
+            "This document contains AI-assisted analysis of the codebase.",
+            "",
+            "---",
+            "",
+            context,
+            "",
+            "---",
+            "",
+            "## How to Use This Document",
+            "",
+            "This document was generated by `claudia docs generate --type insights`.",
+            "",
+            "When run within a Claude Code session, the AI assistant can read this",
+            "structured analysis and provide:",
+            "",
+            "- Architectural recommendations",
+            "- Code quality insights",
+            "- Refactoring suggestions",
+            "- Documentation improvements",
+            "",
+            "To get AI insights, run this command in Claude Code and ask:",
+            "\"Based on this project analysis, what are the key architectural insights?\"",
+            "",
+        ]
+
+        return '\n'.join(lines)
+
     # ------------------------------------------------------------------------
     # Section Helpers (reusable across generation methods)
     # ------------------------------------------------------------------------
 
-    def _section_project_structure(self, as_code_block: bool = False) -> list:
+    def _section_project_structure(self, as_code_block: bool = False, detailed: bool = False) -> list:
         """Generate project structure section.
 
         Args:
             as_code_block: If True, wrap in code block (for architecture).
                           If False, use bullet list (for onboarding).
+            detailed: If True (and junior level), show individual file descriptions.
 
         Returns:
             List of lines for the section.
@@ -1050,6 +1527,26 @@ class DocsAgent:
                 langs = ', '.join(info['languages'])
                 lines.append(f"{indent}{dir_path}/ ({info['files']} files, {langs})")
             lines.append("```")
+        elif detailed and self._is_level('junior'):
+            # Detailed view: show each file with its description
+            for dir_path, info in dirs_to_show:
+                if dir_path == '.':
+                    continue
+
+                # Get files in this directory
+                dir_files = [(p, f) for p, f in self.files.items()
+                             if str(Path(p).parent) == dir_path]
+
+                if dir_files:
+                    lines.append(f"**{dir_path}/**")
+                    lines.append("")
+                    for file_path, file_info in sorted(dir_files):
+                        filename = Path(file_path).name
+                        desc = file_info.description or ''
+                        # Get description: prefer docstring, fall back to inference
+                        description = self._get_file_description(filename, file_info, desc)
+                        lines.append(f"- `{filename}` - {description}")
+                    lines.append("")
         else:
             for dir_path, info in dirs_to_show:
                 if dir_path == '.':
@@ -1062,6 +1559,152 @@ class DocsAgent:
                         lines.append(f"- **{dir_path}/**: {info['files']} files")
 
         return lines
+
+    def _get_file_description(self, filename: str, file_info, docstring: str) -> str:
+        """Get a file description from docstring or inference.
+
+        Tries docstring first, then falls back to pattern-based inference.
+
+        Args:
+            filename: The file name (e.g., 'cli.py')
+            file_info: FileInfo object with classes/functions
+            docstring: Module docstring (may be empty)
+
+        Returns:
+            A brief description (max ~70 chars).
+        """
+        # Try docstring first
+        if docstring:
+            # Remove newlines and extra whitespace
+            desc = ' '.join(docstring.split())
+            # Find first sentence
+            period_idx = desc.find('.')
+            if period_idx > 0 and period_idx < 70:
+                return desc[:period_idx + 1]
+            elif len(desc) <= 70:
+                return desc
+            else:
+                # Truncate at word boundary
+                truncated = desc[:67]
+                last_space = truncated.rfind(' ')
+                if last_space > 40:
+                    return truncated[:last_space] + '...'
+                return truncated + '...'
+
+        # Fall back to inference
+        return self._infer_file_purpose(filename, file_info)
+
+    def _infer_file_purpose(self, filename: str, file_info) -> str:
+        """Infer a file's purpose from its name and contents.
+
+        Uses generic filename patterns that apply to most projects.
+
+        Args:
+            filename: The file name (e.g., 'cli.py')
+            file_info: FileInfo object with classes/functions
+
+        Returns:
+            A brief description of the file's purpose.
+        """
+        # Common filename patterns (generic, not project-specific)
+        name_lower = filename.lower().replace('.py', '').replace('.js', '').replace('.ts', '')
+
+        patterns = {
+            # Entry points
+            'cli': 'Command-line interface',
+            'main': 'Application entry point',
+            'app': 'Application entry point',
+            'index': 'Module entry point',
+            '__main__': 'Package entry point',
+            # Common module types
+            'utils': 'Utility functions',
+            'helpers': 'Helper functions',
+            'config': 'Configuration handling',
+            'settings': 'Settings and configuration',
+            'constants': 'Constants and defaults',
+            'models': 'Data models and schemas',
+            'schemas': 'Data schemas and validation',
+            'types': 'Type definitions',
+            # API/Server
+            'api': 'API implementation',
+            'routes': 'Route handlers',
+            'views': 'View handlers',
+            'handlers': 'Request handlers',
+            'server': 'Server implementation',
+            'client': 'Client implementation',
+            # Data
+            'db': 'Database operations',
+            'database': 'Database operations',
+            'storage': 'Data storage',
+            'cache': 'Caching layer',
+            # Auth
+            'auth': 'Authentication',
+            'permissions': 'Authorization and permissions',
+            # Testing
+            'test_': 'Test suite',
+            'conftest': 'Test configuration and fixtures',
+            # Misc
+            'errors': 'Error definitions',
+            'exceptions': 'Exception classes',
+            'logging': 'Logging configuration',
+            'middleware': 'Middleware components',
+        }
+
+        for pattern, desc in patterns.items():
+            if pattern in name_lower:
+                return desc
+
+        # Fall back to inferring from classes - try to describe what they do
+        if file_info.classes:
+            main_class = file_info.classes[0]
+            # Try to infer purpose from class name
+            class_lower = main_class.lower()
+            if 'handler' in class_lower:
+                return f'{main_class} - request/event handler'
+            elif 'manager' in class_lower:
+                return f'{main_class} - resource management'
+            elif 'client' in class_lower:
+                return f'{main_class} - API client'
+            elif 'server' in class_lower:
+                return f'{main_class} - server implementation'
+            elif 'controller' in class_lower:
+                return f'{main_class} - controller logic'
+            elif 'service' in class_lower:
+                return f'{main_class} - service layer'
+            elif 'model' in class_lower:
+                return f'{main_class} - data model'
+            elif 'view' in class_lower:
+                return f'{main_class} - view layer'
+            elif 'test' in class_lower:
+                return f'Tests for {main_class.replace("Test", "")}'
+            else:
+                return f'Implements {main_class}'
+
+        # Fall back to inferring from function names
+        if file_info.functions:
+            funcs = file_info.functions[:5]  # Look at first 5 functions
+            # Try to find a common theme
+            func_str = ' '.join(funcs).lower()
+            if 'render' in func_str or 'draw' in func_str or 'display' in func_str:
+                return 'UI/display functions'
+            elif 'parse' in func_str or 'load' in func_str or 'read' in func_str:
+                return 'Data parsing and loading'
+            elif 'save' in func_str or 'write' in func_str or 'export' in func_str:
+                return 'Data output and persistence'
+            elif 'validate' in func_str or 'check' in func_str:
+                return 'Validation functions'
+            elif 'format' in func_str:
+                return 'Formatting utilities'
+            elif 'handle' in func_str or 'process' in func_str:
+                return 'Event/request processing'
+            elif 'cmd_' in func_str or 'command' in func_str:
+                return 'Command implementations'
+            elif len(file_info.functions) == 1:
+                return f'Implements {file_info.functions[0]}()'
+            else:
+                return f'{len(file_info.functions)} utility functions'
+
+        return 'Module implementation'
 
     def _section_dependencies(self) -> list:
         """Generate external dependencies section.
@@ -1301,6 +1944,969 @@ class DocsAgent:
             "",
         ]
 
+    def _is_test_file(self, path: str) -> bool:
+        """Check if a file is a test file that should be excluded from framework detection.
+
+        This method focuses on the FILENAME, not the directory path.
+        Files in tests/ directories that are fixtures/examples should NOT be skipped.
+
+        Skipped patterns:
+        - conftest.py (pytest configuration)
+        - test_*.py, *_test.py (Python tests)
+        - *.test.js, *.spec.ts, etc. (JS/TS tests)
+        - *_test.go (Go tests)
+        - *_test.rs (Rust tests)
+        - *Test.java, *Spec.java (Java tests)
+
+        NOT skipped:
+        - fixture_app.py (example app for testing framework detection)
+        - Any file that doesn't match test patterns
+        """
+        filename = Path(path).name
+
+        # Pytest configuration files
+        if filename == 'conftest.py':
+            return True
+
+        # Python test files
+        if filename.startswith('test_') and filename.endswith('.py'):
+            return True
+        if filename.endswith('_test.py'):
+            return True
+
+        # JavaScript/TypeScript test files
+        if any(filename.endswith(ext) for ext in ['.test.js', '.test.ts', '.test.jsx', '.test.tsx',
+                                                    '.spec.js', '.spec.ts', '.spec.jsx', '.spec.tsx']):
+            return True
+
+        # Go test files
+        if filename.endswith('_test.go'):
+            return True
+
+        # Rust test files (in tests/ directory are often integration tests)
+        if filename.endswith('_test.rs'):
+            return True
+
+        # Java/Kotlin test files
+        if filename.endswith('Test.java') or filename.endswith('Spec.java'):
+            return True
+        if filename.endswith('Test.kt') or filename.endswith('Spec.kt'):
+            return True
+
+        return False
+
+    def _detect_project_type(self) -> ProjectType:
+        """Detect the type of project based on file patterns and structure.
+
+        Analyzes the codebase to determine if this is a:
+        - cli: Command-line tool (cli.py, __main__.py, argparse usage)
+        - library: Reusable library/package (pkg/, lib.rs, no entry points)
+        - api: REST/HTTP API (routes/, handlers/, FastAPI/Flask patterns)
+        - webapp: Web application (templates/, static/, frontend frameworks)
+        - microservice: Small containerized service (Dockerfile + small scope)
+
+        Returns:
+            ProjectType with primary type, framework, build system, and confidence.
+        """
+        scores = {
+            'cli': 0.0,
+            'library': 0.0,
+            'api': 0.0,
+            'webapp': 0.0,
+            'microservice': 0.0,
+        }
+        characteristics = []
+        framework_scores = {}  # Track scores per framework for deterministic selection
+        build_system = ''
+
+        # Gather file names and directory names for pattern matching
+        # We need to scan the filesystem, not just self.files (which only has analyzed source files)
+        all_files = set()
+        all_dirs = set()
+
+        # First, add analyzed source files
+        for path in self.files:
+            parts = Path(path).parts
+            all_files.add(parts[-1])  # filename
+            for part in parts[:-1]:
+                all_dirs.add(part)
+
+        # Also scan the filesystem for config files and directories
+        # This catches Dockerfile, pyproject.toml, package.json, templates/, etc.
+        try:
+            for item in self.project_dir.rglob('*'):
+                if item.is_file():
+                    all_files.add(item.name)
+                    # Collect directory names from the path
+                    rel_path = item.relative_to(self.project_dir)
+                    for part in rel_path.parts[:-1]:
+                        all_dirs.add(part)
+                elif item.is_dir():
+                    all_dirs.add(item.name)
+        except (OSError, PermissionError):
+            pass  # Graceful degradation if filesystem access fails
+
+        # Build system detection
+        if 'pyproject.toml' in all_files or 'setup.py' in all_files:
+            build_system = 'pip'
+        elif 'package.json' in all_files:
+            build_system = 'npm'
+        elif 'Cargo.toml' in all_files:
+            build_system = 'cargo'
+        elif 'go.mod' in all_files:
+            build_system = 'go'
+        elif 'pom.xml' in all_files:
+            build_system = 'maven'
+        elif 'build.gradle' in all_files or 'build.gradle.kts' in all_files:
+            build_system = 'gradle'
+        elif 'Gemfile' in all_files:
+            build_system = 'bundler'
+
+        # --- CLI Detection ---
+        cli_indicators = ['cli.py', '__main__.py', 'main.py', 'cmd.py']
+        for indicator in cli_indicators:
+            if indicator in all_files:
+                scores['cli'] += 0.3
+                characteristics.append(f'has {indicator}')
+
+        if 'cmd' in all_dirs or 'commands' in all_dirs:
+            scores['cli'] += 0.2
+            characteristics.append('cmd/ directory')
+
+        # Check for argparse/click/typer imports
+        for path, file_info in self.files.items():
+            if 'cli' in path.lower() or '__main__' in path:
+                imports = file_info.imports
+                if any(imp in imports for imp in ['argparse', 'click', 'typer']):
+                    scores['cli'] += 0.3
+                    characteristics.append('CLI framework detected')
+                    break
+
+        # --- API Detection ---
+        api_dirs = ['routes', 'handlers', 'endpoints', 'api', 'controllers']
+        for d in api_dirs:
+            if d in all_dirs:
+                scores['api'] += 0.25
+                characteristics.append(f'{d}/ directory')
+
+        api_files = ['server.py', 'app.py', 'main.go', 'server.go', 'routes.py']
+        for f in api_files:
+            if f in all_files:
+                scores['api'] += 0.15
+
+        # Framework detection from imports
+        # Skip test files - they often contain example/mock code that shouldn't affect detection
+        for path, file_info in self.files.items():
+            if self._is_test_file(path):
+                continue
+            imports = file_info.imports
+            # Python API frameworks - track scores for deterministic selection
+            if 'fastapi' in imports:
+                scores['api'] += 0.4
+                framework_scores['FastAPI'] = framework_scores.get('FastAPI', 0) + 0.4
+            if 'flask' in imports:
+                scores['api'] += 0.35
+                framework_scores['Flask'] = framework_scores.get('Flask', 0) + 0.35
+            if 'django' in imports:
+                scores['api'] += 0.35
+                framework_scores['Django'] = framework_scores.get('Django', 0) + 0.35
+            if 'express' in imports:
+                scores['api'] += 0.4
+                framework_scores['Express'] = framework_scores.get('Express', 0) + 0.4
+            # Go frameworks
+            if 'gin-gonic' in str(imports) or 'github.com/gin-gonic' in str(imports):
+                scores['api'] += 0.4
+                framework_scores['Gin'] = framework_scores.get('Gin', 0) + 0.4
+            if 'echo' in str(imports) or 'labstack/echo' in str(imports):
+                scores['api'] += 0.4
+                framework_scores['Echo'] = framework_scores.get('Echo', 0) + 0.4
+            # Rust frameworks
+            if 'actix' in str(imports):
+                scores['api'] += 0.4
+                framework_scores['Actix'] = framework_scores.get('Actix', 0) + 0.4
+            if 'rocket' in str(imports):
+                scores['api'] += 0.4
+                framework_scores['Rocket'] = framework_scores.get('Rocket', 0) + 0.4
+
+        # --- Webapp Detection ---
+        webapp_dirs = ['templates', 'static', 'public', 'assets', 'views']
+        for d in webapp_dirs:
+            if d in all_dirs:
+                scores['webapp'] += 0.2
+                characteristics.append(f'{d}/ directory')
+
+        # Frontend frameworks
+        if 'components' in all_dirs:
+            scores['webapp'] += 0.15
+        if any(f.endswith('.html') or f.endswith('.jsx') or f.endswith('.tsx') for f in all_files):
+            scores['webapp'] += 0.2
+
+        for path, file_info in self.files.items():
+            if self._is_test_file(path):
+                continue
+            imports = file_info.imports
+            if 'react' in imports or 'React' in str(file_info.exports):
+                scores['webapp'] += 0.3
+                framework_scores['React'] = framework_scores.get('React', 0) + 0.3
+            if 'vue' in imports:
+                scores['webapp'] += 0.3
+                framework_scores['Vue'] = framework_scores.get('Vue', 0) + 0.3
+            if 'angular' in str(imports):
+                scores['webapp'] += 0.3
+                framework_scores['Angular'] = framework_scores.get('Angular', 0) + 0.3
+            if 'svelte' in imports:
+                scores['webapp'] += 0.3
+                framework_scores['Svelte'] = framework_scores.get('Svelte', 0) + 0.3
+
+        # --- Library Detection ---
+        lib_dirs = ['pkg', 'lib', 'internal', 'src/lib']
+        for d in lib_dirs:
+            if d in all_dirs:
+                scores['library'] += 0.2
+
+        # Rust library indicator
+        if 'lib.rs' in all_files:
+            scores['library'] += 0.4
+            characteristics.append('lib.rs (Rust library)')
+
+        # No entry points suggests library
+        has_entry = any(f in all_files for f in ['main.py', 'cli.py', '__main__.py', 'main.go', 'main.rs'])
+        if not has_entry:
+            scores['library'] += 0.3
+            characteristics.append('no main entry point')
+
+        # Published packages are usually libraries
+        if self.metadata.keywords:
+            scores['library'] += 0.1
+
+        # --- Microservice Detection ---
+        if 'Dockerfile' in all_files or 'dockerfile' in all_files:
+            scores['microservice'] += 0.3
+            characteristics.append('Dockerfile present')
+
+        if 'docker-compose.yml' in all_files or 'docker-compose.yaml' in all_files:
+            scores['microservice'] += 0.15
+
+        # Small scope = microservice
+        total_files = len(self.files)
+        if total_files < 15:
+            scores['microservice'] += 0.2
+            characteristics.append('small codebase')
+        elif total_files < 30:
+            scores['microservice'] += 0.1
+
+        # Kubernetes/deployment indicators
+        k8s_files = ['k8s.yaml', 'deployment.yaml', 'service.yaml', 'helm']
+        for f in k8s_files:
+            if f in all_files or f in all_dirs:
+                scores['microservice'] += 0.15
+                characteristics.append('k8s deployment')
+                break
+
+        # --- Determine Primary Type ---
+        # Normalize scores and pick highest
+        max_score = max(scores.values())
+        if max_score == 0:
+            # Default to library if nothing detected
+            primary = 'library'
+            confidence = 0.2
+        else:
+            primary = max(scores, key=scores.get)
+            confidence = min(max_score, 1.0)
+
+        # CLI can also be an API (e.g., Flask-CLI)
+        # Prefer more specific type when scores are close
+        if primary == 'library' and scores['api'] > 0.3:
+            primary = 'api'
+            confidence = scores['api']
+        elif primary == 'library' and scores['cli'] > 0.3:
+            primary = 'cli'
+            confidence = scores['cli']
+
+        # Detect secondary types (hybrid projects like Flask+Click = API+CLI)
+        # Types with score > 0.25 that aren't the primary type
+        SECONDARY_THRESHOLD = 0.25
+        secondary_types = [
+            t for t, score in sorted(scores.items(), key=lambda x: -x[1])
+            if t != primary and score >= SECONDARY_THRESHOLD
+        ]
+
+        # Select highest-scoring framework (deterministic)
+        framework = ''
+        if framework_scores:
+            framework = max(framework_scores, key=framework_scores.get)
+
+        return ProjectType(
+            primary=primary,
+            framework=framework,
+            build_system=build_system,
+            confidence=round(confidence, 2),
+            characteristics=list(set(characteristics))[:5],  # Top 5 unique
+            secondary_types=secondary_types,
+        )
+
+    def _detect_cli_info(self) -> dict:
+        """Detect if this is a CLI tool and extract command information.
+
+        Looks for:
+        - cli.py or __main__.py files
+        - argparse subparser definitions
+        - Entry point scripts in pyproject.toml
+
+        Returns:
+            dict with 'is_cli', 'cli_name', 'commands', 'has_subcommands'
+        """
+        info = {
+            'is_cli': False,
+            'cli_name': self.metadata.name or '',
+            'commands': [],
+            'has_subcommands': False,
+            'description': self.metadata.description or '',
+        }
+
+        # Find CLI entry point - check filename at end of path
+        cli_filenames = ['cli.py', '__main__.py', 'main.py']
+        cli_file_info = None
+        cli_path = None
+
+        for path, file_info in self.files.items():
+            # Get just the filename from the full path
+            filename = Path(path).name
+            if filename in cli_filenames:
+                cli_file_info = file_info
+                cli_path = path
+                info['is_cli'] = True
+                # Prefer cli.py over others if we find it
+                if filename == 'cli.py':
+                    break
+
+        if not cli_file_info:
+            return info
+
+        # Try to read the CLI file and extract subcommands
+        try:
+            cli_full_path = self.project_dir / cli_path
+            content = cli_full_path.read_text(errors='ignore')
+
+            # Strategy: Find the main subparsers variable name, then only extract
+            # commands added to that variable (not nested subparsers)
+            #
+            # Pattern: subparsers = parser.add_subparsers(...)
+            main_subparser_match = re.search(
+                r'(\w+)\s*=\s*\w+\.add_subparsers\s*\([^)]*dest\s*=\s*[\'"]command[\'"]',
+                content
+            )
+
+            if main_subparser_match:
+                main_var = main_subparser_match.group(1)  # e.g., "subparsers"
+
+                # Only match: subparsers.add_parser('cmd', help='...')
+                # This excludes nested like: archive_sub.add_parser(...)
+                # Use [\w-]+ to match hyphenated commands like 'start-parallel'
+                top_level_pattern = rf'{main_var}\.add_parser\s*\(\s*[\'"]([\w-]+)[\'"]'
+                matches = re.findall(top_level_pattern, content)
+
+                if matches:
+                    info['has_subcommands'] = True
+                    info['commands'] = list(dict.fromkeys(matches))
+
+                # Extract help text only for top-level commands
+                help_pattern = rf'{main_var}\.add_parser\s*\(\s*[\'"]([\w-]+)[\'"][^)]*help\s*=\s*[\'"]([^\'"]+)[\'"]'
+                help_matches = re.findall(help_pattern, content)
+                if help_matches:
+                    info['command_help'] = {cmd: help_text for cmd, help_text in help_matches}
+            else:
+                # Fallback: generic add_parser detection (for simpler CLIs)
+                subparser_pattern = r"add_parser\s*\(\s*['\"]([\w-]+)['\"]"
+                matches = re.findall(subparser_pattern, content)
+                if matches:
+                    info['has_subcommands'] = True
+                    info['commands'] = list(dict.fromkeys(matches))
+
+            # Also look for click commands
+            # Pattern: @cli.command() or @app.command()
+            click_pattern = r"@\w+\.command\s*\([^)]*name\s*=\s*['\"](\w+)['\"]"
+            click_matches = re.findall(click_pattern, content)
+            if click_matches:
+                info['has_subcommands'] = True
+                info['commands'].extend(click_matches)
+                info['commands'] = list(dict.fromkeys(info['commands']))
+
+        except Exception:
+            pass
+
+        return info
+
+    def _onboarding_usage(self, cli_info: dict, project_name: str) -> list:
+        """Generate usage section for CLI tools.
+
+        Uses dynamic pattern detection to work with any CLI, not just Claudia.
+        Detects common patterns like CRUD operations, lifecycle commands,
+        and prefix-based groupings.
+
+        Args:
+            cli_info: Dict from _detect_cli_info()
+            project_name: Name of the project/CLI
+
+        Returns:
+            List of lines for usage section.
+        """
+        if not cli_info['is_cli']:
+            return []
+
+        lines = [
+            "## Using " + project_name.title(),
+            "",
+        ]
+
+        cli_name = cli_info['cli_name'] or project_name
+        cmds = set(cli_info['commands'])
+        command_help = cli_info.get('command_help', {})
+
+        if self._is_level('junior'):
+            lines.extend([
+                f"After installation, the `{cli_name}` command is available in your terminal.",
+                "",
+                "### Getting Help",
+                "",
+                "```bash",
+                "# Show all available commands",
+                f"{cli_name} --help",
+                "",
+                "# Get help for a specific command",
+                f"{cli_name} <command> --help",
+                "```",
+                "",
+            ])
+
+        # Dynamically categorize commands
+        if cli_info['commands']:
+            categories = self._categorize_commands(cli_info['commands'], command_help)
+
+            if self._is_level('junior') and categories:
+                lines.extend([
+                    "### Command Reference",
+                    "",
+                ])
+
+                for category, cat_cmds in categories.items():
+                    if cat_cmds:
+                        lines.append(f"**{category}:**")
+                        for cmd in cat_cmds:
+                            help_text = command_help.get(cmd, '')
+                            if help_text:
+                                lines.append(f"- `{cmd}` - {help_text}")
+                            else:
+                                lines.append(f"- `{cmd}`")
+                        lines.append("")
+            else:
+                lines.extend([
+                    "### Commands",
+                    "",
+                ])
+                for cmd in cli_info['commands']:
+                    help_text = command_help.get(cmd, '')
+                    if help_text:
+                        lines.append(f"- **{cmd}** - {help_text}")
+                    else:
+                        lines.append(f"- **{cmd}**")
+                lines.append("")
+
+        # Add workflow examples for junior level
+        if self._is_level('junior') and cli_info['commands']:
+            workflows = self._detect_workflows(cmds, cli_name, command_help)
+            if workflows:
+                lines.extend([
+                    "### Common Workflows",
+                    "",
+                ])
+                lines.extend(workflows)
+
+        return lines
+
+    def _categorize_commands(self, commands: list, command_help: dict) -> dict:
+        """Dynamically categorize CLI commands based on patterns.
+
+        Detects patterns like:
+        - CRUD operations (create, list, show, update, delete)
+        - Lifecycle commands (start/stop, init/cleanup)
+        - Prefix-based groups (user-*, db-*, etc.)
+
+        Args:
+            commands: List of command names
+            command_help: Dict mapping command names to help text
+
+        Returns:
+            Dict of {category_name: [commands]}
+        """
+        categories = {}
+        categorized = set()
+
+        # Pattern-based categories (generic patterns that apply to many CLIs)
+        # Keywords are checked as: cmd starts with keyword, or cmd equals keyword
+        patterns = {
+            'Data Operations': {
+                'keywords': ['create', 'add', 'new', 'list', 'show', 'get', 'view',
+                             'update', 'edit', 'modify', 'delete', 'remove', 'rm',
+                             'tasks', 'items', 'find', 'search', 'complete', 'reopen'],
+                'commands': [],
+            },
+            'Lifecycle': {
+                'keywords': ['start', 'stop', 'run', 'serve', 'init', 'setup',
+                             'cleanup', 'destroy', 'reset', 'install', 'uninstall',
+                             'up', 'down', 'restart', 'reload'],
+                'commands': [],
+            },
+            'Configuration': {
+                'keywords': ['config', 'configure', 'set', 'unset', 'env', 'settings'],
+                'commands': [],
+            },
+            'Information': {
+                'keywords': ['status', 'info', 'version', 'help', 'check', 'validate',
+                             'inspect', 'describe', 'logs', 'history'],
+                'commands': [],
+            },
+        }
+
+        def matches_keyword(cmd: str, keyword: str) -> bool:
+            """Check if command matches keyword (starts with, equals, or contains)."""
+            cmd_lower = cmd.lower()
+            # Normalize: remove hyphens for comparison
+            cmd_normalized = cmd_lower.replace('-', '')
+            # Check: exact match, starts with, or first part before hyphen
+            if cmd_lower == keyword:
+                return True
+            if cmd_normalized.startswith(keyword):
+                return True
+            if '-' in cmd_lower and cmd_lower.split('-')[0] == keyword:
+                return True
+            return False
+
+        # First pass: match commands to pattern categories
+        for cmd in commands:
+            matched = False
+            for cat_name, cat_info in patterns.items():
+                for keyword in cat_info['keywords']:
+                    if matches_keyword(cmd, keyword):
+                        cat_info['commands'].append(cmd)
+                        categorized.add(cmd)
+                        matched = True
+                        break
+                if matched:
+                    break
+
+        # Second pass: detect prefix-based groups for uncategorized commands
+        prefix_groups = {}
+        for cmd in commands:
+            if cmd in categorized:
+                continue
+            if '-' in cmd:
+                prefix = cmd.split('-')[0]
+                if prefix not in prefix_groups:
+                    prefix_groups[prefix] = []
+                prefix_groups[prefix].append(cmd)
+                categorized.add(cmd)
+
+        # Build final categories (only include non-empty ones)
+        for cat_name, cat_info in patterns.items():
+            if cat_info['commands']:
+                categories[cat_name] = cat_info['commands']
+
+        # Add prefix groups that have multiple commands
+        for prefix, cmds in prefix_groups.items():
+            if len(cmds) >= 2:
+                cat_name = prefix.title() + ' Commands'
+                categories[cat_name] = cmds
+
+        # Remaining uncategorized commands
+        uncategorized = [c for c in commands if c not in categorized]
+        if uncategorized:
+            # Only fall back to flat list if VERY few commands matched
+            if len(categorized) < 3:
+                return {'Commands': commands}
+            categories['Other'] = uncategorized
+
+        return categories
+
+    def _detect_workflows(self, cmds: set, cli_name: str, command_help: dict) -> list:
+        """Detect and generate workflow examples based on command patterns.
+
+        Uses generic patterns that work for any CLI, not project-specific ones.
+        Handles compound commands like 'start-parallel' by checking prefixes.
+
+        Args:
+            cmds: Set of available command names
+            cli_name: Name of the CLI tool
+            command_help: Dict mapping command names to help text
+
+        Returns:
+            List of markdown lines for workflow sections.
+        """
+        lines = []
+
+        def find_cmd(patterns: set) -> str | None:
+            """Find a command matching any pattern (exact or prefix match)."""
+            # First try exact matches
+            exact = cmds & patterns
+            if exact:
+                return list(exact)[0]
+            # Then try prefix matches (e.g., 'start-parallel' matches 'start')
+            for cmd in cmds:
+                prefix = cmd.split('-')[0] if '-' in cmd else cmd
+                if prefix in patterns:
+                    return cmd
+            return None
+
+        # CRUD workflow - very common pattern
+        create_cmd = find_cmd({'create', 'add', 'new'})
+        list_cmd = find_cmd({'list', 'ls', 'tasks', 'items'})  # 'tasks' for task-based CLIs
+        show_cmd = find_cmd({'show', 'get', 'view', 'describe'})
+        delete_cmd = find_cmd({'delete', 'remove', 'rm'})
+
+        if create_cmd and (list_cmd or show_cmd):
+            display_cmd = list_cmd or show_cmd
+            lines.extend([
+                "#### Basic Operations",
+                "",
+                "```bash",
+                "# List/view items",
+                f"{cli_name} {display_cmd}",
+                "",
+                "# Create a new item",
+                f'{cli_name} {create_cmd} "item name"',
+            ])
+            if delete_cmd:
+                lines.extend([
+                    "",
+                    "# Delete an item",
+                    f"{cli_name} {delete_cmd} <item-id>",
+                ])
+            lines.extend(["```", ""])
+
+        # Lifecycle workflow - start/stop patterns (handles start-parallel, etc.)
+        start_cmd = find_cmd({'start', 'run', 'serve', 'up'})
+        stop_cmd = find_cmd({'stop', 'halt', 'down', 'kill'})
+
+        if start_cmd and stop_cmd:
+            lines.extend([
+                "#### Running the Service",
+                "",
+                "```bash",
+                "# Start the service",
+                f"{cli_name} {start_cmd}",
+                "",
+                "# Stop the service",
+                f"{cli_name} {stop_cmd}",
+                "```",
+                "",
+            ])
+
+        # Init workflow
+        if 'init' in cmds:
+            lines.extend([
+                "#### Project Setup",
+                "",
+                "```bash",
+                "# Initialize in your project",
+                "cd /path/to/your/project",
+                f"{cli_name} init",
+            ])
+            if 'status' in cmds:
+                lines.extend([
+                    "",
+                    "# Verify setup",
+                    f"{cli_name} status",
+                ])
+            lines.extend(["```", ""])
+
+        # Config workflow
+        config_cmd = find_cmd({'config', 'configure', 'set'})
+        if config_cmd:
+            lines.extend([
+                "#### Configuration",
+                "",
+                "```bash",
+                "# View or set configuration",
+                f"{cli_name} {config_cmd}",
+                "```",
+                "",
+            ])
+
+        # If no workflows detected, provide generic getting started
+        if not lines:
+            # Find the most likely "main" command
+            main_cmd = find_cmd({'run', 'start', 'list', 'status', 'help'})
+            if main_cmd:
+                lines.extend([
+                    "#### Getting Started",
+                    "",
+                    "```bash",
+                    f"# Try the {main_cmd} command",
+                    f"{cli_name} {main_cmd}",
+                    "```",
+                    "",
+                ])
+
+        return lines
+
+    def _onboarding_quick_examples(self, project_type: ProjectType, project_name: str, languages: set) -> list:
+        """Generate quick examples based on project type.
+
+        Provides type-specific getting started examples:
+        - api: How to start the server, make a test request
+        - webapp: How to start development server, view in browser
+        - library: How to import and use basic functionality
+        - microservice: How to run with Docker
+
+        Args:
+            project_type: Detected project type
+            project_name: Name of the project
+            languages: Set of detected programming languages
+
+        Returns:
+            List of markdown lines.
+        """
+        lines = [
+            "## Quick Examples",
+            "",
+            "Here are some common tasks to try after setup:",
+            "",
+        ]
+
+        pkg_name = project_name.replace('-', '_').replace(' ', '_')
+
+        if project_type.primary == 'api':
+            lines.extend(self._quick_examples_api(project_type, pkg_name, languages))
+        elif project_type.primary == 'webapp':
+            lines.extend(self._quick_examples_webapp(project_type, pkg_name, languages))
+        elif project_type.primary == 'library':
+            lines.extend(self._quick_examples_library(project_type, pkg_name, languages))
+        elif project_type.primary == 'microservice':
+            lines.extend(self._quick_examples_microservice(project_type, pkg_name, languages))
+        else:
+            # Generic examples for unknown project types
+            lines.extend(self._quick_examples_generic(pkg_name, languages))
+
+        return lines
+
+    def _quick_examples_api(self, project_type: ProjectType, pkg_name: str, languages: set) -> list:
+        """Quick examples for API projects."""
+        lines = [
+            "### Start the development server",
+            "",
+            "```bash",
+        ]
+
+        framework = project_type.framework.lower()
+        if framework == 'fastapi':
+            lines.extend([
+                "# Start with hot reload",
+                "uvicorn main:app --reload",
+                "",
+                "# Or if using the package structure",
+                f"uvicorn {pkg_name}.main:app --reload",
+            ])
+        elif framework == 'flask':
+            lines.extend([
+                "# Set development mode for auto-reload",
+                "export FLASK_DEBUG=1",
+                "flask run",
+            ])
+        elif framework == 'django':
+            lines.extend([
+                "python manage.py runserver",
+            ])
+        elif framework == 'express':
+            lines.extend([
+                "npm run dev  # or npm start",
+            ])
+        elif 'go' in languages:
+            lines.extend([
+                "go run main.go  # or go run .",
+            ])
+        else:
+            lines.append("# Check package.json or README for start command")
+
+        lines.extend([
+            "```",
+            "",
+            "### Test the API",
+            "",
+            "```bash",
+            "# Check if the server is running",
+            "curl http://localhost:8000/  # or port 3000, 5000",
+            "",
+            "# View API documentation (if available)",
+            "# FastAPI: http://localhost:8000/docs",
+            "# Swagger: http://localhost:8000/swagger",
+            "```",
+            "",
+        ])
+
+        return lines
+
+    def _quick_examples_webapp(self, project_type: ProjectType, pkg_name: str, languages: set) -> list:
+        """Quick examples for web application projects."""
+        lines = [
+            "### Start development server",
+            "",
+            "```bash",
+        ]
+
+        framework = project_type.framework.lower()
+        if framework == 'react':
+            lines.extend([
+                "npm start  # or npm run dev",
+                "",
+                "# Opens automatically at http://localhost:3000",
+            ])
+        elif framework == 'vue':
+            lines.extend([
+                "npm run serve  # or npm run dev",
+            ])
+        elif framework == 'angular':
+            lines.extend([
+                "ng serve",
+            ])
+        elif framework == 'svelte':
+            lines.extend([
+                "npm run dev",
+            ])
+        elif 'python' in languages:
+            lines.extend([
+                "# Flask/Django development server",
+                "flask run  # or python manage.py runserver",
+            ])
+        else:
+            lines.append("npm run dev  # or check package.json")
+
+        lines.extend([
+            "```",
+            "",
+            "### View in browser",
+            "",
+            "Open your browser to:",
+            "- Development: http://localhost:3000 (or 5173 for Vite)",
+            "- Check terminal output for the actual port",
+            "",
+        ])
+
+        return lines
+
+    def _quick_examples_library(self, project_type: ProjectType, pkg_name: str, languages: set) -> list:
+        """Quick examples for library projects."""
+        lines = [
+            "### Check your installation",
+            "",
+            "```bash",
+        ]
+
+        if 'python' in languages:
+            lines.extend([
+                f"python -c \"import {pkg_name}; print('OK')\"",
+            ])
+        elif 'javascript' in languages or 'typescript' in languages:
+            lines.extend([
+                f"node -e \"require('{pkg_name}'); console.log('OK')\"",
+            ])
+        elif 'go' in languages:
+            lines.append("go build ./...")
+        elif 'rust' in languages:
+            lines.append("cargo build")
+
+        lines.extend([
+            "```",
+            "",
+            "### Run the tests",
+            "",
+            "```bash",
+        ])
+
+        if 'python' in languages:
+            lines.append("pytest  # or python -m pytest")
+        elif 'javascript' in languages or 'typescript' in languages:
+            lines.append("npm test")
+        elif 'go' in languages:
+            lines.append("go test ./...")
+        elif 'rust' in languages:
+            lines.append("cargo test")
+        else:
+            lines.append("# Check README for test command")
+
+        lines.extend([
+            "```",
+            "",
+        ])
+
+        return lines
+
+    def _quick_examples_microservice(self, project_type: ProjectType, pkg_name: str, languages: set) -> list:
+        """Quick examples for microservice projects."""
+        lines = [
+            "### Build and run with Docker",
+            "",
+            "```bash",
+            "# Build the container",
+            "docker build -t " + pkg_name + " .",
+            "",
+            "# Run the container",
+            "docker run -p 8080:8080 " + pkg_name,
+            "```",
+            "",
+            "### Run locally (without Docker)",
+            "",
+            "```bash",
+        ]
+
+        if 'python' in languages:
+            lines.append("python -m " + pkg_name + "  # or check Dockerfile CMD")
+        elif 'go' in languages:
+            lines.append("go run main.go")
+        elif 'javascript' in languages or 'typescript' in languages:
+            lines.append("npm start")
+        else:
+            lines.append("# Check Dockerfile CMD for start command")
+
+        lines.extend([
+            "```",
+            "",
+        ])
+
+        return lines
+
+    def _quick_examples_generic(self, pkg_name: str, languages: set) -> list:
+        """Generic quick examples for unknown project types."""
+        lines = [
+            "### Check your installation",
+            "",
+            "```bash",
+        ]
+
+        if 'python' in languages:
+            lines.append(f"python -c \"import {pkg_name}; print('OK')\"")
+        elif 'javascript' in languages or 'typescript' in languages:
+            lines.append("npm test  # or node index.js")
+
+        lines.extend([
+            "```",
+            "",
+            "### Run the tests",
+            "",
+            "```bash",
+        ])
+
+        if 'python' in languages:
+            lines.append("pytest  # or python -m pytest")
+        elif 'javascript' in languages or 'typescript' in languages:
+            lines.append("npm test")
+
+        lines.extend([
+            "```",
+            "",
+        ])
+
+        return lines
+
     # ------------------------------------------------------------------------
     # Main Generation Methods
     # ------------------------------------------------------------------------
@@ -1431,10 +3037,19 @@ class DocsAgent:
         """Generate onboarding guide for new developers based on skill level.
 
         Uses helper methods for each section to keep this method readable.
+        Type-aware generation based on detected project type (CLI, API, webapp, library).
         """
         project_name = self.metadata.name or self.project_dir.resolve().name
         repo_url = self.metadata.repository or '<repo-url>'
         languages = set(self.structure['file_types'].keys())
+
+        # Detect project type for type-aware documentation
+        project_type = self._detect_project_type()
+
+        # Detect CLI info (for CLI projects)
+        cli_info = self._detect_cli_info() if project_type.primary == 'cli' else {
+            'is_cli': False, 'cli_name': '', 'commands': [], 'has_subcommands': False
+        }
 
         lines = [
             "# Developer Onboarding Guide",
@@ -1491,14 +3106,18 @@ class DocsAgent:
         # Setup instructions
         lines.extend(self._onboarding_setup(languages, repo_url, project_name))
 
-        # Project structure
+        # === CLI USAGE SECTION (new - right after setup) ===
+        lines.extend(self._onboarding_usage(cli_info, project_name))
+
+        # Project structure (moved after usage for better flow)
         lines.extend([
             "## Project Structure",
             "",
             "Here's how the codebase is organized:",
             "",
         ])
-        lines.extend(self._section_project_structure(as_code_block=False))
+        # Use detailed=True for junior level to show individual file purposes
+        lines.extend(self._section_project_structure(as_code_block=False, detailed=True))
         lines.append("")
 
         # Key files
@@ -1513,33 +3132,9 @@ class DocsAgent:
             lines.append(f"{i}. `{ep['path']}` - {ep['description']}")
         lines.append("")
 
-        # Junior: Quick examples
-        if self._is_level('junior'):
-            lines.extend([
-                "## Quick Examples",
-                "",
-                "Here are some common tasks to try after setup:",
-                "",
-                "### Check your installation",
-                "",
-                "```bash",
-                f"# Make sure {project_name} is installed",
-            ])
-            if 'python' in languages:
-                lines.append(f"python -c \"import {project_name.replace('-', '_')}; print('OK')\"")
-            lines.extend([
-                "```",
-                "",
-                "### Run the tests",
-                "",
-                "```bash",
-                "# If tests exist in the project",
-            ])
-            if 'python' in languages:
-                lines.append("pytest  # or python -m pytest")
-            elif 'javascript' in languages or 'typescript' in languages:
-                lines.append("npm test")
-            lines.extend(["```", ""])
+        # Junior: Quick examples based on project type
+        if self._is_level('junior') and not cli_info['is_cli']:
+            lines.extend(self._onboarding_quick_examples(project_type, project_name, languages))
 
         # Development workflow
         lines.extend(self._onboarding_workflow())
@@ -1904,7 +3499,7 @@ def cmd_docs(args):
             print("Analyzing codebase...")
         verbose = getattr(args, 'verbose', False)
         result = agent.analyze(verbose=verbose, force=force)
-        print(f"\n✓ Analysis complete:")
+        print("\n✓ Analysis complete:")
         print(f"  Total files: {result['total_files']}")
         if result.get('files_cached', 0) > 0:
             print(f"  Cached: {result['files_cached']} (unchanged)")
@@ -1948,12 +3543,19 @@ def cmd_docs(args):
 
         print(f"\n✓ All docs generated in {agent.output_dir}/")
 
+    elif args.docs_command == 'context':
+        # Output structured context for Claude Code to analyze
+        agent.analyze()
+        context = agent.generate_context()
+        print(context)
+
     else:
         print("Usage:")
         print("  claudia docs analyze                    Analyze codebase structure")
         print("  claudia docs generate [--type X] [-L Y] Generate documentation")
+        print("  claudia docs context                    Output structured context for AI")
         print("  claudia docs all [-L Y]                 Generate all doc types")
-        print("\nDoc types: architecture, onboarding, api, readme")
+        print("\nDoc types: architecture, onboarding, api, readme, insights")
         print("Levels: junior (verbose), mid (balanced), senior (minimal)")
 
     return 0

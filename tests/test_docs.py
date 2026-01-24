@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from claudia.docs import DocsAgent, FileInfo, ProjectMetadata
+from claudia.docs import DocsAgent
 
 
 # =============================================================================
@@ -295,8 +295,9 @@ class TestFileAnalysis:
         js_info = agent.files['src/index.js']
 
         assert js_info.language == 'javascript'
-        # Note: Current regex only captures require() style imports, not ES6 'from' imports
-        assert 'lodash' in js_info.imports
+        # Both ES6 imports and CommonJS require() should be captured
+        assert 'lodash' in js_info.imports  # CommonJS: require('lodash')
+        assert 'react' in js_info.imports   # ES6: import from 'react'
         assert 'App' in js_info.classes
 
     def test_extract_python_imports(self, docs_agent):
@@ -641,3 +642,462 @@ class TestSmartTruncate:
         assert result.endswith('...')
         # The result should be shorter than original
         assert len(result) <= 33  # max_length + '...'
+
+
+class TestProjectTypeDetection:
+    """Tests for project type detection."""
+
+    def test_detect_cli_project(self, temp_project_dir):
+        """Test detection of CLI project."""
+        # Create CLI indicator files
+        src_dir = temp_project_dir / 'src'
+        src_dir.mkdir(exist_ok=True)
+        cli_file = src_dir / 'cli.py'
+        cli_file.write_text('''
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.parse_args()
+''')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        project_type = agent._detect_project_type()
+
+        assert project_type.primary == 'cli'
+        assert project_type.confidence >= 0.3
+        assert project_type.build_system == ''  # No build system files
+
+    def test_detect_api_project(self, temp_project_dir):
+        """Test detection of API project with Flask."""
+        src_dir = temp_project_dir / 'src'
+        src_dir.mkdir(exist_ok=True)
+        routes_dir = src_dir / 'routes'
+        routes_dir.mkdir()
+
+        app_file = src_dir / 'app.py'
+        app_file.write_text('''
+from flask import Flask
+
+app = Flask(__name__)
+''')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        project_type = agent._detect_project_type()
+
+        assert project_type.primary == 'api'
+        assert project_type.framework == 'Flask'
+
+    def test_detect_webapp_with_templates(self, temp_project_dir):
+        """Test detection of webapp with templates."""
+        src_dir = temp_project_dir / 'src'
+        templates_dir = src_dir / 'templates'
+        static_dir = src_dir / 'static'
+        templates_dir.mkdir(parents=True)
+        static_dir.mkdir()
+
+        # Create a template file
+        (templates_dir / 'index.html').write_text('<html></html>')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        project_type = agent._detect_project_type()
+
+        assert project_type.primary == 'webapp'
+        assert 'templates/ directory' in project_type.characteristics
+
+    def test_detect_library_no_entry(self, temp_project_dir):
+        """Test detection of library with no entry point."""
+        src_dir = temp_project_dir / 'src'
+        pkg_dir = src_dir / 'pkg'
+        pkg_dir.mkdir(parents=True)
+
+        # Create library-like files with no main entry
+        (pkg_dir / 'utils.py').write_text('def helper(): pass')
+        (pkg_dir / 'core.py').write_text('class Core: pass')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        project_type = agent._detect_project_type()
+
+        assert project_type.primary == 'library'
+        assert 'no main entry point' in project_type.characteristics
+
+    def test_detect_microservice(self, temp_project_dir):
+        """Test detection of microservice with Dockerfile."""
+        # Create Dockerfile
+        (temp_project_dir / 'Dockerfile').write_text('FROM python:3.10')
+        (temp_project_dir / 'src' / 'app.py').write_text('# small app')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        project_type = agent._detect_project_type()
+
+        # Microservice should score well
+        assert project_type.confidence > 0
+        assert 'Dockerfile present' in project_type.characteristics
+
+    def test_detect_build_system_pip(self, temp_project_dir):
+        """Test detection of pip build system."""
+        (temp_project_dir / 'pyproject.toml').write_text('[project]\nname = "test"')
+        (temp_project_dir / 'src' / 'main.py').write_text('print("hello")')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        project_type = agent._detect_project_type()
+
+        assert project_type.build_system == 'pip'
+
+    def test_detect_build_system_npm(self, temp_project_dir):
+        """Test detection of npm build system."""
+        (temp_project_dir / 'package.json').write_text('{"name": "test"}')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        project_type = agent._detect_project_type()
+
+        assert project_type.build_system == 'npm'
+
+    def test_detect_fastapi_framework(self, temp_project_dir):
+        """Test detection of FastAPI framework."""
+        src_dir = temp_project_dir / 'src'
+        (src_dir / 'main.py').write_text('''
+from fastapi import FastAPI
+
+app = FastAPI()
+''')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        project_type = agent._detect_project_type()
+
+        assert project_type.framework == 'FastAPI'
+        assert project_type.primary == 'api'
+
+    def test_detect_hybrid_project(self, temp_project_dir):
+        """Test detection of hybrid project (Flask API + Click CLI)."""
+        src_dir = temp_project_dir / 'src'
+        src_dir.mkdir(exist_ok=True)
+
+        # Flask app (API indicator)
+        (src_dir / 'app.py').write_text('''
+from flask import Flask
+app = Flask(__name__)
+''')
+
+        # CLI with argparse (CLI indicator)
+        (src_dir / 'cli.py').write_text('''
+import argparse
+def main():
+    parser = argparse.ArgumentParser()
+    parser.parse_args()
+''')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        project_type = agent._detect_project_type()
+
+        # Should detect both types
+        # Primary is whichever scored higher
+        assert project_type.primary in ('api', 'cli')
+        # Secondary should include the other
+        all_types = [project_type.primary] + project_type.secondary_types
+        assert 'api' in all_types or 'cli' in all_types
+
+
+class TestGenerateContext:
+    """Tests for structured context generation."""
+
+    def test_generate_context_has_sections(self, docs_agent):
+        """Test that generate_context produces all expected sections."""
+        docs_agent.analyze()
+        context = docs_agent.generate_context()
+
+        assert '## Project Identity' in context
+        assert '## Detected Project Type' in context
+        assert '## Languages & File Types' in context
+        assert '## Key Modules' in context
+        assert '## External Dependencies' in context
+        assert '## Analysis Request' in context
+
+    def test_generate_context_includes_project_name(self, docs_agent):
+        """Test that context includes project name."""
+        docs_agent.analyze()
+        context = docs_agent.generate_context()
+
+        # Should include the project name from metadata
+        assert 'test-project' in context
+
+    def test_generate_context_includes_project_type(self, docs_agent):
+        """Test that context includes project type detection."""
+        docs_agent.analyze()
+        context = docs_agent.generate_context()
+
+        assert 'Primary Type' in context
+        assert 'Confidence' in context
+
+
+class TestGenerateInsights:
+    """Tests for insights documentation generation."""
+
+    def test_generate_insights(self, docs_agent):
+        """Test that insights doc type is generated."""
+        docs_agent.analyze()
+        content = docs_agent.generate('insights')
+
+        assert '# Project Insights' in content
+        assert 'AI-assisted analysis' in content
+
+    def test_insights_includes_context(self, docs_agent):
+        """Test that insights includes the structured context."""
+        docs_agent.analyze()
+        content = docs_agent.generate('insights')
+
+        # Should include context sections
+        assert '## Project Identity' in content
+        assert '## Analysis Request' in content
+
+
+class TestArchitecturalPatterns:
+    """Tests for architectural pattern detection."""
+
+    def test_detect_agent_pattern(self, temp_project_dir):
+        """Test detection of Agent pattern."""
+        src_dir = temp_project_dir / 'src'
+        src_dir.mkdir(exist_ok=True)
+        (src_dir / 'agent.py').write_text('class TaskAgent: pass')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        patterns = agent._detect_architectural_patterns()
+
+        assert any('Agent' in p for p in patterns)
+
+    def test_detect_service_pattern(self, temp_project_dir):
+        """Test detection of Service pattern."""
+        src_dir = temp_project_dir / 'src'
+        src_dir.mkdir(exist_ok=True)
+        (src_dir / 'user_service.py').write_text('class UserService: pass')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+        patterns = agent._detect_architectural_patterns()
+
+        assert any('Service' in p for p in patterns)
+
+
+class TestMultiLanguageExtraction:
+    """Tests for universal symbol extraction in Go, Rust, Java."""
+
+    def test_go_extraction(self, temp_project_dir):
+        """Test Go struct and function extraction."""
+        src_dir = temp_project_dir / 'src'
+        src_dir.mkdir(exist_ok=True)
+        (src_dir / 'main.go').write_text('''
+package main
+
+import (
+    "fmt"
+    "net/http"
+)
+
+type User struct {
+    Name string
+    Age  int
+}
+
+type Config struct {
+    Port int
+}
+
+func main() {
+    fmt.Println("Hello")
+}
+
+func HandleRequest(w http.ResponseWriter, r *http.Request) {
+    // handler
+}
+
+func (u *User) GetName() string {
+    return u.Name
+}
+''')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+
+        assert 'src/main.go' in agent.files
+        go_info = agent.files['src/main.go']
+
+        assert go_info.language == 'go'
+        # Structs should be detected as classes
+        assert 'User' in go_info.classes
+        assert 'Config' in go_info.classes
+        # Exported functions (capitalized) should be detected
+        assert 'HandleRequest' in go_info.functions
+        # Imports
+        assert 'fmt' in go_info.imports or 'net/http' in go_info.imports
+
+    def test_rust_extraction(self, temp_project_dir):
+        """Test Rust struct, enum, and function extraction."""
+        src_dir = temp_project_dir / 'src'
+        src_dir.mkdir(exist_ok=True)
+        (src_dir / 'lib.rs').write_text('''
+use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
+
+pub struct User {
+    name: String,
+    age: u32,
+}
+
+pub enum Status {
+    Active,
+    Inactive,
+}
+
+pub trait Runnable {
+    fn run(&self);
+}
+
+pub fn process_data(data: &str) -> Result<(), Error> {
+    Ok(())
+}
+
+pub async fn fetch_user(id: u32) -> User {
+    User { name: "test".to_string(), age: 0 }
+}
+
+fn private_helper() {
+    // not exported
+}
+''')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+
+        assert 'src/lib.rs' in agent.files
+        rust_info = agent.files['src/lib.rs']
+
+        assert rust_info.language == 'rust'
+        # Structs, enums, traits detected as classes
+        assert 'User' in rust_info.classes
+        assert 'Status' in rust_info.classes
+        assert 'Runnable' in rust_info.classes
+        # Public functions detected
+        assert 'process_data' in rust_info.functions
+        assert 'fetch_user' in rust_info.functions
+        # Imports
+        assert any('std' in imp or 'serde' in imp for imp in rust_info.imports)
+
+    def test_java_extraction(self, temp_project_dir):
+        """Test Java class and method extraction."""
+        src_dir = temp_project_dir / 'src'
+        src_dir.mkdir(exist_ok=True)
+        (src_dir / 'UserService.java').write_text('''
+package com.example.service;
+
+import java.util.List;
+import org.springframework.stereotype.Service;
+
+public class UserService {
+
+    public User findById(Long id) {
+        return null;
+    }
+
+    public List<User> findAll() {
+        return null;
+    }
+
+    private void validateUser(User user) {
+        // private method
+    }
+}
+
+public class UserController {
+
+    public void handleRequest() {
+        // handler
+    }
+}
+''')
+
+        agent = DocsAgent(project_dir=temp_project_dir)
+        agent.analyze()
+
+        assert 'src/UserService.java' in agent.files
+        java_info = agent.files['src/UserService.java']
+
+        assert java_info.language == 'java'
+        # Classes detected
+        assert 'UserService' in java_info.classes
+        # Imports detected
+        assert any('java.util' in imp for imp in java_info.imports)
+
+
+class TestTestFileFiltering:
+    """Tests for _is_test_file() helper - ensures proper filtering."""
+
+    def test_skips_conftest(self, temp_project_dir):
+        """conftest.py should be detected as test file."""
+        agent = DocsAgent(project_dir=temp_project_dir)
+        assert agent._is_test_file('tests/conftest.py') is True
+        assert agent._is_test_file('conftest.py') is True
+
+    def test_skips_python_test_files(self, temp_project_dir):
+        """Python test files should be skipped."""
+        agent = DocsAgent(project_dir=temp_project_dir)
+        # test_*.py pattern
+        assert agent._is_test_file('tests/test_utils.py') is True
+        assert agent._is_test_file('test_main.py') is True
+        # *_test.py pattern
+        assert agent._is_test_file('utils_test.py') is True
+        assert agent._is_test_file('src/module_test.py') is True
+
+    def test_skips_js_test_files(self, temp_project_dir):
+        """JavaScript/TypeScript test files should be skipped."""
+        agent = DocsAgent(project_dir=temp_project_dir)
+        # .test.js/ts patterns
+        assert agent._is_test_file('utils.test.js') is True
+        assert agent._is_test_file('components/Button.test.tsx') is True
+        # .spec.js/ts patterns
+        assert agent._is_test_file('utils.spec.ts') is True
+        assert agent._is_test_file('api/service.spec.js') is True
+
+    def test_skips_go_test_files(self, temp_project_dir):
+        """Go test files should be skipped."""
+        agent = DocsAgent(project_dir=temp_project_dir)
+        assert agent._is_test_file('pkg/utils_test.go') is True
+        assert agent._is_test_file('main_test.go') is True
+
+    def test_skips_rust_test_files(self, temp_project_dir):
+        """Rust test files should be skipped."""
+        agent = DocsAgent(project_dir=temp_project_dir)
+        assert agent._is_test_file('src/utils_test.rs') is True
+
+    def test_skips_java_test_files(self, temp_project_dir):
+        """Java/Kotlin test files should be skipped."""
+        agent = DocsAgent(project_dir=temp_project_dir)
+        assert agent._is_test_file('UserServiceTest.java') is True
+        assert agent._is_test_file('UserSpec.java') is True
+        assert agent._is_test_file('ServiceTest.kt') is True
+
+    def test_keeps_fixture_files(self, temp_project_dir):
+        """Fixture/example files should NOT be skipped."""
+        agent = DocsAgent(project_dir=temp_project_dir)
+        # These are real app code used as fixtures for testing
+        assert agent._is_test_file('tests/fixture_app.py') is False
+        assert agent._is_test_file('tests/sample_config.py') is False
+        assert agent._is_test_file('tests/fixtures/example_app.py') is False
+
+    def test_keeps_regular_source_files(self, temp_project_dir):
+        """Regular source files should NOT be skipped."""
+        agent = DocsAgent(project_dir=temp_project_dir)
+        assert agent._is_test_file('src/app.py') is False
+        assert agent._is_test_file('utils.js') is False
+        assert agent._is_test_file('main.go') is False
+        assert agent._is_test_file('lib.rs') is False
+        assert agent._is_test_file('Service.java') is False

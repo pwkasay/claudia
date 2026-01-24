@@ -20,7 +20,7 @@ Follow each section in order for the best experience.
 
 ```bash
 # Clone the repository
-git clone https://github.com/paulkasay/claudia
+git clone https://github.com/pwkasay/claudia
 cd claudia
 
 # Create virtual environment
@@ -45,35 +45,116 @@ pip install -e .
 - Make sure your virtual environment is activated (you should see `(venv)` in your prompt)
 - Try: `pip install --upgrade pip` first
 
+## Using Claudia
+
+After installation, the `claudia` command is available in your terminal.
+
+### Getting Help
+
+```bash
+# Show all available commands
+claudia --help
+
+# Get help for a specific command
+claudia <command> --help
+```
+
+### Command Reference
+
+**Data Operations:**
+- `update` - Check for updates
+- `tasks` - List tasks
+- `show` - Show task details
+- `create` - Create a task
+- `complete` - Complete one or more tasks
+- `edit` - Edit a task
+- `delete` - Delete a task
+- `reopen` - Reopen one or more tasks
+
+**Lifecycle:**
+- `init` - Initialize Claudia in a project
+- `uninstall` - Remove Claudia from a project
+- `start-parallel` - Start parallel mode
+- `stop-parallel` - Stop parallel mode
+
+**Information:**
+- `status` - Show system status
+
+**Other:**
+- `next` - Claim next task
+- `archive` - Archive old completed tasks
+- `time` - Time tracking
+- `template` - Manage task templates
+- `subtask` - Manage subtasks
+- `session` - Manage sessions
+- `dashboard` - Launch dashboard
+- `docs` - Generate documentation
+
+### Common Workflows
+
+#### Basic Operations
+
+```bash
+# List/view items
+claudia tasks
+
+# Create a new item
+claudia create "item name"
+
+# Delete an item
+claudia delete <item-id>
+```
+
+#### Running the Service
+
+```bash
+# Start the service
+claudia start-parallel
+
+# Stop the service
+claudia stop-parallel
+```
+
+#### Project Setup
+
+```bash
+# Initialize in your project
+cd /path/to/your/project
+claudia init
+
+# Verify setup
+claudia status
+```
+
 ## Project Structure
 
 Here's how the codebase is organized:
 
-- **src/claudia/**: 6 python files
+**src/claudia/**
+
+- `__init__.py` - Claudia - A lightweight task coordination system for Claude Code.
+- `agent.py` - Unified Agent Client for Claudia.
+- `cli.py` - Command-line interface
+- `colors.py` - Colors Utility Module Provides terminal color support with...
+- `coordinator.py` - Implements TaskStatus
+- `dashboard.py` - UI/display functions
+- `docs.py` - Documentation Agent for Claudia.
+
+**tests/**
+
+- `__init__.py` - Module implementation
+- `conftest.py` - Pytest configuration and shared fixtures for Claudia tests.
+- `test_agent.py` - Tests for the Agent class (single mode).
+- `test_cli.py` - Tests for the CLI module.
+- `test_colors.py` - Tests for the colors module.
+- `test_docs.py` - Tests for the DocsAgent documentation generator.
+
 
 ## Key Files to Understand
 
 Start by reading these files to understand the codebase:
 
 1. `src/claudia/cli.py` - Entry point: cli.py
-
-## Quick Examples
-
-Here are some common tasks to try after setup:
-
-### Check your installation
-
-```bash
-# Make sure claudia is installed
-python -c "import claudia; print('OK')"
-```
-
-### Run the tests
-
-```bash
-# If tests exist in the project
-pytest  # or python -m pytest
-```
 
 ## Development Workflow
 

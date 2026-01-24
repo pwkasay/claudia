@@ -314,7 +314,7 @@ def main(state_dir=None, refresh=3.0, once=False, no_alt_screen=False):
 
     if not state_dir.exists():
         print(f"{Colors.RED}State directory not found: {state_dir}{Colors.RESET}")
-        print(f"Initialize with: python setup.py")
+        print("Initialize with: python setup.py")
         sys.exit(1)
 
     use_alt_screen = not once and not no_alt_screen

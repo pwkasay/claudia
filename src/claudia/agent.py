@@ -250,8 +250,6 @@ class Agent:
             f"{body}"
         )
 
-        last_error = None
-
         for attempt in range(self._max_retries + 1):
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -282,8 +280,6 @@ class Agent:
                 break
 
             except (socket.timeout, ConnectionRefusedError, OSError) as e:
-                last_error = e
-
                 # Check if we should retry
                 if attempt < self._max_retries:
                     delay = self._calculate_retry_delay(attempt)
@@ -328,7 +324,7 @@ class Agent:
             try:
                 result = json.loads(body_text)
             except json.JSONDecodeError:
-                raise RuntimeError(f"Invalid JSON response from coordinator")
+                raise RuntimeError("Invalid JSON response from coordinator")
 
             # Check for error responses
             if status_code >= 400:
@@ -1252,12 +1248,12 @@ class Agent:
                     if title is not None and title != task.get('title'):
                         previous['title'] = task.get('title')
                         task['title'] = title
-                        changes.append(f"title")
+                        changes.append("title")
 
                     if description is not None and description != task.get('description'):
                         previous['description'] = task.get('description')
                         task['description'] = description
-                        changes.append(f"description")
+                        changes.append("description")
 
                     if priority is not None and priority != task.get('priority'):
                         previous['priority'] = task.get('priority')
@@ -1267,7 +1263,7 @@ class Agent:
                     if labels is not None and labels != task.get('labels'):
                         previous['labels'] = task.get('labels', []).copy()
                         task['labels'] = labels
-                        changes.append(f"labels")
+                        changes.append("labels")
 
                     if changes:
                         task['updated_at'] = datetime.now(timezone.utc).isoformat()
@@ -1520,7 +1516,7 @@ class Agent:
 
         # Filter by labels if specified
         if labels:
-            tasks = [t for t in tasks if any(l in t.get('labels', []) for l in labels)]
+            tasks = [t for t in tasks if any(lbl in t.get('labels', []) for lbl in labels)]
 
         report = {'total_seconds': 0, 'items': []}
 
